@@ -6,10 +6,11 @@
 #   - Left Y axis with % labels (right axis hidden).
 #   - Click colored swatch in the CPU legend to choose a custom color per thread.
 #   - File Systems tab: "Used" shows a progress bar (like Ubuntu).
-#   - Preferences: thread line width, toggle X/Y grid, extra smoothing (double-EMA),
-#                  and all previous knobs (history, update cadences, EMA alphas,
-#                  show per-CPU frequencies).
-#   - Keeps all efficiency optimizations (separate timers, batched table updates, etc.).
+#   - Preferences: antialiasing toggle, thread line width, toggle X/Y grid,
+#                  extra smoothing (double-EMA), and all previous knobs
+#                  (history, update cadences, EMA alphas, show per-CPU frequencies).
+#   - Separate plot vs text refresh intervals.
+#   - File Systems tab only lists active drives and refreshes on demand.
 #
 # Dependencies: psutil, PyQt5, pyqtgraph
 # License: MIT (adjust as desired)
@@ -257,13 +258,13 @@ class ResourcesTab(QtWidgets.QWidget):
       • Memory/Swap filled area plot (left % axis).
       • Network RX/TX plot with autoscaling.
     Performance:
-      - Two timers: plot (graphs) vs stats (numbers & frequencies).
+      - Separate timers: plots (graphs) vs text (legend & labels).
       - Optional per-CPU frequencies to save syscalls when disabled.
     """
     # Defaults (can be changed live from Preferences)
     HISTORY_SECONDS   = 60
     PLOT_UPDATE_MS    = 150    # graphs cadence
-    STATS_UPDATE_MS   = 1000    # legend/frequencies cadence
+    TEXT_UPDATE_MS    = 1000    # legend/labels cadence
     EMA_ALPHA         = 0.60   # base EMA alpha
     MEM_EMA_ALPHA     = 0.90
     SHOW_CPU_FREQ     = True
@@ -271,12 +272,13 @@ class ResourcesTab(QtWidgets.QWidget):
     THREAD_LINE_WIDTH = 1.5    # px
     SHOW_GRID_X       = True
     SHOW_GRID_Y       = True
+    ANTIALIAS         = True
 
     def __init__(self, parent=None):
         super().__init__(parent)
 
-        # Disable antialiasing to lower CPU usage when rendering many curves
-        pg.setConfigOptions(antialias=False)
+        # Global plot settings
+        pg.setConfigOptions(antialias=self.ANTIALIAS)
         pg.setConfigOption('background', (30, 30, 30))
         pg.setConfigOption('foreground', 'w')
 
@@ -379,6 +381,10 @@ class ResourcesTab(QtWidgets.QWidget):
         self.net_label = QtWidgets.QLabel("Receiving —  Sending —")
         self.net_label.setStyleSheet("color:white;")
 
+        # Text placeholders updated by the text timer
+        self._mem_label_text = "Memory —"
+        self._net_label_text = "Receiving —  Sending —"
+
         # ----- Assemble layout -----
         layout.addWidget(self.cpu_plot, stretch=3)
         layout.addWidget(self.cpu_legend_scroll)
@@ -403,11 +409,13 @@ class ResourcesTab(QtWidgets.QWidget):
         self.plot_timer.timeout.connect(self._update_plots)
         self.plot_timer.start(self.PLOT_UPDATE_MS)
 
-        self.stats_timer = QtCore.QTimer(self)
-        self.stats_timer.timeout.connect(self._update_stats)
-        self.stats_timer.start(self.STATS_UPDATE_MS)
+        self.text_timer = QtCore.QTimer(self)
+        self.text_timer.timeout.connect(self._update_text)
+        self.text_timer.start(self.TEXT_UPDATE_MS)
 
         self._apply_freq_visibility()
+        self._update_plots()
+        self._update_text()
 
     # ---------- helpers ----------
     def _history_len(self) -> int:
@@ -431,7 +439,7 @@ class ResourcesTab(QtWidgets.QWidget):
         self,
         history_seconds: int,
         plot_update_ms: int,
-        stats_update_ms: int,
+        text_update_ms: int,
         ema_alpha: float,
         mem_ema_alpha: float,
         show_cpu_freq: bool,
@@ -439,11 +447,12 @@ class ResourcesTab(QtWidgets.QWidget):
         show_grid_x: bool,
         show_grid_y: bool,
         extra_smoothing: bool,
+        antialias: bool,
     ):
         """Rebuild buffers/axes and timers according to Preferences."""
         self.HISTORY_SECONDS   = int(max(5, history_seconds))
         self.PLOT_UPDATE_MS    = int(max(50, plot_update_ms))
-        self.STATS_UPDATE_MS   = int(max(50, stats_update_ms))
+        self.TEXT_UPDATE_MS    = int(max(50, text_update_ms))
         self.EMA_ALPHA         = float(min(0.999, max(0.0, ema_alpha)))
         self.MEM_EMA_ALPHA     = float(min(0.999, max(0.0, mem_ema_alpha)))
         self.SHOW_CPU_FREQ     = bool(show_cpu_freq)
@@ -451,12 +460,14 @@ class ResourcesTab(QtWidgets.QWidget):
         self.SHOW_GRID_X       = bool(show_grid_x)
         self.SHOW_GRID_Y       = bool(show_grid_y)
         self.EXTRA_SMOOTHING   = bool(extra_smoothing)
+        self.ANTIALIAS         = bool(antialias)
+        pg.setConfigOptions(antialias=self.ANTIALIAS)
 
         # Update timers
         if self.plot_timer.isActive():  self.plot_timer.stop()
-        if self.stats_timer.isActive(): self.stats_timer.stop()
+        if self.text_timer.isActive(): self.text_timer.stop()
         self.plot_timer.start(self.PLOT_UPDATE_MS)
-        self.stats_timer.start(self.STATS_UPDATE_MS)
+        self.text_timer.start(self.TEXT_UPDATE_MS)
 
         # Axes / ranges / grids
         history_len = self._history_len()
@@ -485,8 +496,8 @@ class ResourcesTab(QtWidgets.QWidget):
         # Frequencies visibility
         self._apply_freq_visibility()
 
-    # ---------- STATS TIMER (legend & frequency) ----------
-    def _update_stats(self):
+    # ---------- TEXT TIMER (legend & labels) ----------
+    def _update_text(self):
         # Per-CPU usage (store raw, then double-EMA for stable legend)
         per = psutil.cpu_percent(interval=None, percpu=True)
         n = min(len(per), self.n_cpu)
@@ -518,8 +529,13 @@ class ResourcesTab(QtWidgets.QWidget):
         self.cpu_legend_grid.set_values(usages, per_freq_mhz)
         self.cpu_freq_avg_label.setVisible(self.SHOW_CPU_FREQ)
         if self.SHOW_CPU_FREQ:
-            self.cpu_freq_avg_label.setText(f"Average frequency: {human_freq(avg_freq)}" if avg_freq else "Average frequency: —")
+            self.cpu_freq_avg_label.setText(
+                f"Average frequency: {human_freq(avg_freq)}" if avg_freq else "Average frequency: —"
+            )
 
+        # Update cached labels for memory and network
+        self.mem_label.setText(self._mem_label_text)
+        self.net_label.setText(self._net_label_text)
     # ---------- PLOT TIMER (graphs only) ----------
     def _update_plots(self):
         # CPU: double-EMA toward the latest raw usage values for smooth lines
@@ -552,7 +568,7 @@ class ResourcesTab(QtWidgets.QWidget):
 
         cache_txt = f"Cache {human_bytes(getattr(vm, 'cached', 0))}" if getattr(vm, 'cached', 0) else "Cache —"
         swap_txt = "Swap not available" if sm.total == 0 else f"Swap {swap_ema:.1f}% of {human_bytes(sm.total)}"
-        self.mem_label.setText(
+        self._mem_label_text = (
             f"Memory {human_bytes(vm.used)} ({mem_ema:.1f}%) of {human_bytes(vm.total)} — {cache_txt}   |   {swap_txt}"
         )
 
@@ -572,7 +588,7 @@ class ResourcesTab(QtWidgets.QWidget):
 
         max_y = max(1.0, max(max(self.rx_hist), max(self.tx_hist)))
         self.net_plot.setYRange(0, max_y * 1.2)
-        self.net_label.setText(
+        self._net_label_text = (
             f"Receiving {rx_kib:,.1f} KiB/s — Total {human_bytes(cur.bytes_recv)}     "
             f"Sending {tx_kib:,.1f} KiB/s — Total {human_bytes(cur.bytes_sent)}"
         )
@@ -741,9 +757,8 @@ class FileSystemsTab(QtWidgets.QWidget):
     Mounted file systems table (like Ubuntu):
       - Device | Directory | Type | Total | Available | Used (with progress bar)
     Plus a second table with per-disk I/O totals and rates.
+    Refreshed on demand when the tab becomes visible.
     """
-    UPDATE_MS = 2000
-
     def __init__(self, parent=None):
         super().__init__(parent)
         main = QtWidgets.QVBoxLayout(self)
@@ -787,9 +802,7 @@ class FileSystemsTab(QtWidgets.QWidget):
         self.prev_disk: Dict[str, psutil._common.sdiskio] = {}
         self.prev_t = time.monotonic()
 
-        self.timer = QtCore.QTimer(self)
-        self.timer.timeout.connect(self.refresh)
-        self.timer.start(self.UPDATE_MS)
+        # Populate once; refreshed again when tab is shown
         self.refresh()
 
     def _progress_cell(self, percent: float, used_text: str) -> QtWidgets.QWidget:
@@ -818,6 +831,8 @@ class FileSystemsTab(QtWidgets.QWidget):
             try:
                 usage = psutil.disk_usage(p.mountpoint)
             except Exception:
+                continue
+            if not p.device or usage.total <= 0:
                 continue
             row = self.mounts.rowCount()
             self.mounts.insertRow(row)
@@ -868,6 +883,10 @@ class FileSystemsTab(QtWidgets.QWidget):
 
         self.prev_t = now
 
+    def showEvent(self, e: QtGui.QShowEvent):
+        self.refresh()
+        super().showEvent(e)
+
 
 # ------------------------------- Preferences dialog -------------------------------
 
@@ -876,13 +895,14 @@ class PreferencesDialog(QtWidgets.QDialog):
     Tune the Resources tab at runtime:
       - History window (seconds)
       - Plot update interval (ms)  [graphs]
-      - Stats update interval (ms) [legend numbers & per-CPU frequencies]
+      - Text update interval (ms) [legend numbers & labels]
       - CPU EMA alpha
       - Memory EMA alpha
       - Show per-CPU frequencies
       - Thread line width (px)
       - Toggle X grid / Y grid
       - Extra smoothing (double-EMA) for CPU lines
+      - Enable/disable antialiasing
     """
     def __init__(self, resources_tab: ResourcesTab, parent=None):
         super().__init__(parent)
@@ -901,10 +921,10 @@ class PreferencesDialog(QtWidgets.QDialog):
         self.in_plot.setSingleStep(10)
         self.in_plot.setValue(resources_tab.PLOT_UPDATE_MS)
 
-        self.in_stats = QtWidgets.QSpinBox()
-        self.in_stats.setRange(50, 5000)
-        self.in_stats.setSingleStep(10)
-        self.in_stats.setValue(resources_tab.STATS_UPDATE_MS)
+        self.in_text = QtWidgets.QSpinBox()
+        self.in_text.setRange(50, 5000)
+        self.in_text.setSingleStep(10)
+        self.in_text.setValue(resources_tab.TEXT_UPDATE_MS)
 
         self.in_ema = QtWidgets.QDoubleSpinBox()
         self.in_ema.setDecimals(3)
@@ -934,9 +954,12 @@ class PreferencesDialog(QtWidgets.QDialog):
         self.in_extra = QtWidgets.QCheckBox("Extra smoothing for CPU lines (double-EMA)")
         self.in_extra.setChecked(resources_tab.EXTRA_SMOOTHING)
 
+        self.in_antialias = QtWidgets.QCheckBox("Enable antialiasing (smooth curves)")
+        self.in_antialias.setChecked(resources_tab.ANTIALIAS)
+
         form.addRow("History window (seconds):", self.in_history)
         form.addRow("Plot update interval (ms):", self.in_plot)
-        form.addRow("Stats update interval (ms):", self.in_stats)
+        form.addRow("Text update interval (ms):", self.in_text)
         form.addRow("CPU EMA alpha (0–0.999):", self.in_ema)
         form.addRow("Memory EMA alpha (0–0.999):", self.in_mem_ema)
         form.addRow(self.in_show_freq)
@@ -944,6 +967,7 @@ class PreferencesDialog(QtWidgets.QDialog):
         form.addRow(self.in_grid_x)
         form.addRow(self.in_grid_y)
         form.addRow(self.in_extra)
+        form.addRow(self.in_antialias)
 
         btns = QtWidgets.QDialogButtonBox(
             QtWidgets.QDialogButtonBox.Ok | QtWidgets.QDialogButtonBox.Apply | QtWidgets.QDialogButtonBox.Cancel
@@ -960,7 +984,7 @@ class PreferencesDialog(QtWidgets.QDialog):
         return (
             int(self.in_history.value()),
             int(self.in_plot.value()),
-            int(self.in_stats.value()),
+            int(self.in_text.value()),
             float(self.in_ema.value()),
             float(self.in_mem_ema.value()),
             bool(self.in_show_freq.isChecked()),
@@ -968,6 +992,7 @@ class PreferencesDialog(QtWidgets.QDialog):
             bool(self.in_grid_x.isChecked()),
             bool(self.in_grid_y.isChecked()),
             bool(self.in_extra.isChecked()),
+            bool(self.in_antialias.isChecked()),
         )
 
     def apply(self):
