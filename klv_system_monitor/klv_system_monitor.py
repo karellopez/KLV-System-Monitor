@@ -275,7 +275,8 @@ class ResourcesTab(QtWidgets.QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
 
-        pg.setConfigOptions(antialias=True)
+        # Disable antialiasing to lower CPU usage when rendering many curves
+        pg.setConfigOptions(antialias=False)
         pg.setConfigOption('background', (30, 30, 30))
         pg.setConfigOption('foreground', 'w')
 
@@ -648,29 +649,30 @@ class ProcessesTab(QtWidgets.QWidget):
         self.table.setUpdatesEnabled(False)
 
         try:
-            for proc in psutil.process_iter(['pid', 'name', 'username']):
-                pid = proc.info['pid']
+            for proc in psutil.process_iter([
+                'pid', 'name', 'username', 'cpu_percent',
+                'memory_info', 'io_counters', 'cmdline'
+            ]):
+                info = proc.info
+                pid = info['pid']
                 seen.add(pid)
 
-                name = proc.info.get('name') or ""
-                user = proc.info.get('username') or ""
+                name = info.get('name') or ""
+                user = info.get('username') or ""
 
-                try:
-                    cpu = proc.cpu_percent(None)
-                except Exception:
-                    cpu = 0.0
+                cpu = float(info.get('cpu_percent') or 0.0)
 
                 mem_txt, mem_sort = "—", 0
-                try:
-                    rss = proc.memory_info().rss
-                    mem_txt, mem_sort = human_bytes(rss), rss
-                except Exception:
-                    pass
+                meminfo = info.get('memory_info')
+                if meminfo is not None:
+                    rss = getattr(meminfo, 'rss', 0)
+                    if rss:
+                        mem_txt, mem_sort = human_bytes(rss), rss
 
                 read_total = write_total = 0
                 read_rate = write_rate = 0.0
-                try:
-                    io = proc.io_counters()
+                io = info.get('io_counters')
+                if io is not None:
                     read_total = getattr(io, 'read_bytes', 0)
                     write_total = getattr(io, 'write_bytes', 0)
                     prev = self.prev_io.get(pid)
@@ -678,16 +680,9 @@ class ProcessesTab(QtWidgets.QWidget):
                         read_rate  = max(0, read_total  - prev[0]) / 1024.0 / dt
                         write_rate = max(0, write_total - prev[1]) / 1024.0 / dt
                     self.prev_io[pid] = (read_total, write_total)
-                except Exception:
-                    pass
 
-                cmdline = ""
-                try:
-                    cl = proc.cmdline()
-                    if cl:
-                        cmdline = " ".join(cl)
-                except Exception:
-                    pass
+                cmdline_list = info.get('cmdline') or []
+                cmdline = " ".join(cmdline_list) if cmdline_list else ""
 
                 if pid in self.row_for_pid:
                     row = self.row_for_pid[pid]
