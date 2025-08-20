@@ -1,0 +1,39 @@
+[build-system]
+requires = ["setuptools>=61", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "klv-system-monitor"
+version = "0.1.0"
+description = "Fancy system monitor for everyone"
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{name = "Karel López Vilaret", email = "karel.mauricio.lopez.vilaret@uni-oldenburg.de"}]
+keywords = ["BIDS", "DICOM", "GUI", "Neuroimaging"]
+requires-python = ">=3.8"
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Programming Language :: Python :: 3",
+    "Operating System :: OS Independent",
+]
+dependencies = [
+    "PyQt5",
+    "pyqtgraph",
+    "psutil"
+]
+
+[project.urls]
+Homepage = ""
+Documentation = ""
+Source = ""
+Tracker = ""
+
+[project.scripts]
+klvtop = "klv_system_monitor.klv_system_monitor:main"
+
+[tool.setuptools]
+packages = ["klv_system_monitor"]
+include-package-data = true
+
+
