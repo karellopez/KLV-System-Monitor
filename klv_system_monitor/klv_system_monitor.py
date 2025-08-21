@@ -28,6 +28,10 @@ import threading
 from PyQt5 import QtWidgets, QtCore, QtGui
 import pyqtgraph as pg
 
+# Simple OS helpers
+IS_WINDOWS = platform.system() == "Windows"
+IS_LINUX = platform.system() == "Linux"
+
 
 # ------------------------------- Utilities -------------------------------
 
@@ -262,6 +266,9 @@ class CollapsibleSection(QtWidgets.QWidget):
         super().__init__(parent)
         self.toggle = QtWidgets.QToolButton(text=title, checkable=True, checked=True)
         self.toggle.setStyleSheet("QToolButton { border: none; }")
+        font = self.toggle.font()
+        font.setBold(True)
+        self.toggle.setFont(font)
         self.toggle.setToolButtonStyle(QtCore.Qt.ToolButtonTextBesideIcon)
         self.toggle.setArrowType(QtCore.Qt.DownArrow)
         self.toggle.clicked.connect(self._on_toggle)
@@ -282,6 +289,7 @@ class CollapsibleSection(QtWidgets.QWidget):
         self.setSizePolicy(
             QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Expanding
         )
+        self.default_stretch = 1
 
     def _on_toggle(self):
         visible = self.toggle.isChecked()
@@ -297,7 +305,7 @@ class CollapsibleSection(QtWidgets.QWidget):
             if layout is not None:
                 idx = layout.indexOf(self)
                 if idx != -1:
-                    layout.setStretch(idx, 1 if visible else 0)
+                    layout.setStretch(idx, self.default_stretch if visible else 0)
 
     def add_widget(self, w: QtWidgets.QWidget):
         self.content_layout.addWidget(w)
@@ -321,7 +329,7 @@ class ResourcesTab(QtWidgets.QWidget):
     TEXT_UPDATE_MS    = 1000    # legend/labels cadence
     EMA_ALPHA         = 0.60   # base EMA alpha
     MEM_EMA_ALPHA     = 0.90
-    SHOW_CPU_FREQ     = True
+    SHOW_CPU_FREQ     = IS_LINUX
     EXTRA_SMOOTHING   = True   # double-EMA for CPU lines (tames spikes)
     THREAD_LINE_WIDTH = 1.5    # px
     SHOW_GRID_X       = True
@@ -357,6 +365,7 @@ class ResourcesTab(QtWidgets.QWidget):
         self.cpu_plot.setSizePolicy(
             QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Expanding
         )
+        self.cpu_plot.installEventFilter(self)
 
         # Colors & pens (HSV palette to start, user can override via legend)
         self.cpu_colors: List[QtGui.QColor] = []
@@ -405,6 +414,7 @@ class ResourcesTab(QtWidgets.QWidget):
         self.mem_plot.setSizePolicy(
             QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Expanding
         )
+        self.mem_plot.installEventFilter(self)
 
         self._x_vals = list(range(history_len))
         self._zeros = [0] * history_len
@@ -439,6 +449,7 @@ class ResourcesTab(QtWidgets.QWidget):
         self.net_plot.setSizePolicy(
             QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Expanding
         )
+        self.net_plot.installEventFilter(self)
 
         self.rx_hist = deque([0.0] * history_len, maxlen=history_len)
         self.tx_hist = deque([0.0] * history_len, maxlen=history_len)
@@ -452,20 +463,27 @@ class ResourcesTab(QtWidgets.QWidget):
         self._net_label_text = "Receiving —  Sending —"
 
         # ----- Assemble layout -----
+        self.cpu_total_label = QtWidgets.QLabel("Total CPU Usage: —")
+        self.cpu_total_label.setStyleSheet("color:#bbbbbb; margin-left:2px;")
+
         self.cpu_section = CollapsibleSection("CPU")
         self.cpu_section.add_widget(self.cpu_plot)
         self.cpu_section.add_widget(self.cpu_legend_scroll)
         self.cpu_section.add_widget(self.cpu_freq_avg_label)
+        self.cpu_section.add_widget(self.cpu_total_label)
+        self.cpu_section.default_stretch = 2
 
         self.mem_section = CollapsibleSection("Memory and Swap")
         self.mem_section.add_widget(self.mem_plot)
         self.mem_section.add_widget(self.mem_label)
+        self.mem_section.default_stretch = 1
 
         self.net_section = CollapsibleSection("Network")
         self.net_section.add_widget(self.net_plot)
         self.net_section.add_widget(self.net_label)
+        self.net_section.default_stretch = 1
 
-        layout.addWidget(self.cpu_section, 1)
+        layout.addWidget(self.cpu_section, 2)
         layout.addWidget(self.mem_section, 1)
         layout.addWidget(self.net_section, 1)
 
@@ -490,7 +508,7 @@ class ResourcesTab(QtWidgets.QWidget):
         self.text_timer.timeout.connect(self._update_text)
 
         self._apply_freq_visibility()
-        self._update_grid_ticks()
+        self._update_tick_steps()
 
     def showEvent(self, e: QtGui.QShowEvent):
         self.plot_timer.start(self.PLOT_UPDATE_MS)
@@ -504,6 +522,11 @@ class ResourcesTab(QtWidgets.QWidget):
         self.text_timer.stop()
         super().hideEvent(e)
 
+    def eventFilter(self, obj, event):
+        if event.type() == QtCore.QEvent.Resize and obj in (self.cpu_plot, self.mem_plot, self.net_plot):
+            self._update_tick_steps(obj)
+        return super().eventFilter(obj, event)
+
     # ---------- helpers ----------
     def _history_len(self) -> int:
         return max(1, int(self.HISTORY_SECONDS * 1000 / self.PLOT_UPDATE_MS))
@@ -511,13 +534,18 @@ class ResourcesTab(QtWidgets.QWidget):
     def _apply_grid(self, plot: pg.PlotWidget):
         plot.showGrid(x=self.SHOW_GRID_X, y=self.SHOW_GRID_Y, alpha=0.2)
 
-    def _update_grid_ticks(self):
-        step_x = max(1, self._history_len() // max(1, self.GRID_DIVS))
-        for axis in (self.cpu_axis_bottom, self.mem_axis_bottom, self.net_axis_bottom):
-            axis.setTickSpacing(step_x, step_x)
-        step_y = 100 / max(1, self.GRID_DIVS)
-        for axis in (self.cpu_axis_left, self.mem_axis_left):
-            axis.setTickSpacing(step_y, step_y)
+    def _update_tick_steps(self, plot: Optional[pg.PlotWidget] = None):
+        plots = [plot] if plot else [self.cpu_plot, self.mem_plot, self.net_plot]
+        interval = self.PLOT_UPDATE_MS / 1000.0
+        for p in plots:
+            width = p.size().width()
+            step_sec = 10 if width >= 400 else 30
+            step_x = max(1, int(round(step_sec / interval)))
+            p.getAxis('bottom').setTickSpacing(step_x, step_x)
+            if p in (self.cpu_plot, self.mem_plot):
+                height = p.size().height()
+                step_y = 10 if height >= 200 else 30
+                p.getAxis('left').setTickSpacing(step_y, step_y)
 
     def _on_color_change(self, cpu_index: int, color: QtGui.QColor):
         """Legend callback: update curve and local color store."""
@@ -618,7 +646,7 @@ class ResourcesTab(QtWidgets.QWidget):
         self.TEXT_UPDATE_MS    = int(max(50, text_update_ms))
         self.EMA_ALPHA         = float(min(0.999, max(0.0, ema_alpha)))
         self.MEM_EMA_ALPHA     = float(min(0.999, max(0.0, mem_ema_alpha)))
-        self.SHOW_CPU_FREQ     = bool(show_cpu_freq)
+        self.SHOW_CPU_FREQ     = bool(show_cpu_freq) if IS_LINUX else False
         self.THREAD_LINE_WIDTH = float(max(0.5, thread_line_width))
         self.SHOW_GRID_X       = bool(show_grid_x)
         self.SHOW_GRID_Y       = bool(show_grid_y)
@@ -646,7 +674,7 @@ class ResourcesTab(QtWidgets.QWidget):
         for plot in (self.cpu_plot, self.mem_plot, self.net_plot):
             plot.setXRange(0, history_len - 1)
             self._apply_grid(plot)
-        self._update_grid_ticks()
+        self._update_tick_steps()
 
         # Rebuild buffers for graphs
         self.cpu_histories = [deque([0.0] * history_len, maxlen=history_len) for _ in range(self.n_cpu)]
@@ -703,6 +731,8 @@ class ResourcesTab(QtWidgets.QWidget):
             self.cpu_freq_avg_label.setText(
                 f"Average frequency: {human_freq(avg_freq)}" if avg_freq else "Average frequency: —"
             )
+        total_usage = sum(usages) / len(usages) if usages else 0.0
+        self.cpu_total_label.setText(f"Total CPU Usage: {total_usage:.1f}%")
 
         # Update cached labels for memory and network
         self.mem_label.setText(self._mem_label_text)
@@ -1146,8 +1176,10 @@ class PreferencesDialog(QtWidgets.QDialog):
         self.in_mem_ema.setSingleStep(0.01)
         self.in_mem_ema.setValue(resources_tab.MEM_EMA_ALPHA)
 
-        self.in_show_freq = QtWidgets.QCheckBox("Show per-CPU frequencies (and average)")
-        self.in_show_freq.setChecked(resources_tab.SHOW_CPU_FREQ)
+        self.in_show_freq: Optional[QtWidgets.QCheckBox] = None
+        if IS_LINUX:
+            self.in_show_freq = QtWidgets.QCheckBox("Show per-CPU frequencies (and average)")
+            self.in_show_freq.setChecked(resources_tab.SHOW_CPU_FREQ)
 
         self.in_width = QtWidgets.QDoubleSpinBox()
         self.in_width.setRange(0.5, 8.0)
@@ -1175,7 +1207,8 @@ class PreferencesDialog(QtWidgets.QDialog):
         form.addRow("Processes refresh interval (ms):", self.in_proc)
         form.addRow("CPU EMA alpha (0–0.999):", self.in_ema)
         form.addRow("Memory EMA alpha (0–0.999):", self.in_mem_ema)
-        form.addRow(self.in_show_freq)
+        if self.in_show_freq is not None:
+            form.addRow(self.in_show_freq)
         form.addRow("Thread line width (px):", self.in_width)
         form.addRow(self.in_grid_x)
         form.addRow(self.in_grid_y)
@@ -1202,7 +1235,7 @@ class PreferencesDialog(QtWidgets.QDialog):
             int(self.in_proc.value()),
             float(self.in_ema.value()),
             float(self.in_mem_ema.value()),
-            bool(self.in_show_freq.isChecked()),
+            bool(self.in_show_freq.isChecked()) if self.in_show_freq is not None else False,
             float(self.in_width.value()),
             bool(self.in_grid_x.isChecked()),
             bool(self.in_grid_y.isChecked()),
