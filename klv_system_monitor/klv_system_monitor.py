@@ -18,6 +18,7 @@
 
 import sys
 import time
+import math
 from collections import deque
 from typing import Dict, Tuple, List, Optional
 
@@ -232,12 +233,15 @@ class LegendGrid(QtWidgets.QWidget):
             self.value_labels.append(val)
 
             roww = QtWidgets.QWidget()
+            roww.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Fixed)
             rowl = QtWidgets.QHBoxLayout(roww)
             rowl.setContentsMargins(0, 0, 0, 0)
             rowl.addWidget(swatch)
             rowl.addWidget(name)
             rowl.addWidget(val)
+            rowl.addStretch(1)
             grid.addWidget(roww, r, c)
+            grid.setColumnStretch(c, 1)
 
     def _pick_color(self, i: int):
         """Open QColorDialog and notify the parent when a color is chosen."""
@@ -330,6 +334,7 @@ class ResourcesTab(QtWidgets.QWidget):
     EMA_ALPHA         = 0.60   # base EMA alpha
     MEM_EMA_ALPHA     = 0.90
     SHOW_CPU_FREQ     = IS_LINUX
+    SMOOTH_GRAPHS     = True   # global smoothing toggle
     EXTRA_SMOOTHING   = True   # double-EMA for CPU lines (tames spikes)
     THREAD_LINE_WIDTH = 1.5    # px
     SHOW_GRID_X       = True
@@ -455,12 +460,15 @@ class ResourcesTab(QtWidgets.QWidget):
         self.tx_hist = deque([0.0] * history_len, maxlen=history_len)
         self.rx_curve = self.net_plot.plot(self._x_vals, self._zeros, pen=pg.mkPen((100, 180, 255), width=2))
         self.tx_curve = self.net_plot.plot(self._x_vals, self._zeros, pen=pg.mkPen((255, 120, 100), width=2))
-        self.net_label = QtWidgets.QLabel("Receiving —  Sending —")
+        self.net_ema_rx = 0.0
+        self.net_ema_tx = 0.0
+        self.net_label = QtWidgets.QLabel("<span style='color:#64b4ff'>Receiving —</span>  <span style='color:#ff7864'>Sending —</span>")
+        self.net_label.setTextFormat(QtCore.Qt.RichText)
         self.net_label.setStyleSheet("color:white;")
 
         # Text placeholders updated by the text timer
         self._mem_label_text = "Memory —"
-        self._net_label_text = "Receiving —  Sending —"
+        self._net_label_text = "<span style='color:#64b4ff'>Receiving —</span>  <span style='color:#ff7864'>Sending —</span>"
 
         # ----- Assemble layout -----
         self.cpu_total_label = QtWidgets.QLabel("Total CPU Usage: —")
@@ -537,15 +545,25 @@ class ResourcesTab(QtWidgets.QWidget):
     def _update_tick_steps(self, plot: Optional[pg.PlotWidget] = None):
         plots = [plot] if plot else [self.cpu_plot, self.mem_plot, self.net_plot]
         interval = self.PLOT_UPDATE_MS / 1000.0
+        total_secs = (self._history_len() - 1) * interval
         for p in plots:
-            width = p.size().width()
-            step_sec = 10 if width >= 400 else 30
+            width = max(1, p.size().width())
+            max_labels_x = max(2, int(width / 80))
+            max_labels_x = min(self.GRID_DIVS + 1, max_labels_x)
+            raw_step_sec = total_secs / (max_labels_x - 1)
+            step_sec = 10 * math.ceil(raw_step_sec / 10.0)
             step_x = max(1, int(round(step_sec / interval)))
             p.getAxis('bottom').setTickSpacing(step_x, step_x)
-            if p in (self.cpu_plot, self.mem_plot):
-                height = p.size().height()
-                step_y = 10 if height >= 200 else 30
-                p.getAxis('left').setTickSpacing(step_y, step_y)
+
+            height = max(1, p.size().height())
+            max_labels_y = max(2, int(height / 40))
+            max_labels_y = min(self.GRID_DIVS + 1, max_labels_y)
+            y_min, y_max = p.viewRange()[1]
+            y_range = max(1.0, y_max - y_min)
+            base = 10 if p in (self.cpu_plot, self.mem_plot) else 100
+            raw_step = y_range / (max_labels_y - 1)
+            step_val = base * math.ceil(raw_step / base)
+            p.getAxis('left').setTickSpacing(step_val, step_val)
 
     def _on_color_change(self, cpu_index: int, color: QtGui.QColor):
         """Legend callback: update curve and local color store."""
@@ -637,6 +655,7 @@ class ResourcesTab(QtWidgets.QWidget):
         show_grid_x: bool,
         show_grid_y: bool,
         grid_divs: int,
+        smooth_graphs: bool,
         extra_smoothing: bool,
         antialias: bool,
     ):
@@ -651,6 +670,7 @@ class ResourcesTab(QtWidgets.QWidget):
         self.SHOW_GRID_X       = bool(show_grid_x)
         self.SHOW_GRID_Y       = bool(show_grid_y)
         self.GRID_DIVS         = int(max(1, grid_divs))
+        self.SMOOTH_GRAPHS     = bool(smooth_graphs)
         self.EXTRA_SMOOTHING   = bool(extra_smoothing)
         self.ANTIALIAS         = bool(antialias)
         pg.setConfigOptions(antialias=self.ANTIALIAS)
@@ -684,6 +704,8 @@ class ResourcesTab(QtWidgets.QWidget):
             curve.setData([0.0] * history_len)
         self.cpu_plot_ema1 = [0.0] * self.n_cpu
         self.cpu_plot_ema2 = [0.0] * self.n_cpu
+        self.cpu_display_ema1 = [0.0] * self.n_cpu
+        self.cpu_display_ema2 = [0.0] * self.n_cpu
 
         self._x_vals = list(range(history_len))
         self._zeros = [0] * history_len
@@ -695,6 +717,8 @@ class ResourcesTab(QtWidgets.QWidget):
         self.tx_hist = deque([0.0] * history_len, maxlen=history_len)
         self.rx_curve.setData(self._x_vals, self._zeros)
         self.tx_curve.setData(self._x_vals, self._zeros)
+        self.net_ema_rx = 0.0
+        self.net_ema_tx = 0.0
 
         # Frequencies visibility
         self._apply_freq_visibility()
@@ -708,16 +732,20 @@ class ResourcesTab(QtWidgets.QWidget):
         for i in range(n):
             raw = max(0.0, float(per[i]))
             self.cpu_last_raw[i] = raw
-            # Double EMA to tame spikes while keeping responsiveness
-            a = self.EMA_ALPHA
-            self.cpu_display_ema1[i] = a * self.cpu_display_ema1[i] + (1.0 - a) * raw
-            self.cpu_display_ema2[i] = a * self.cpu_display_ema2[i] + (1.0 - a) * self.cpu_display_ema1[i]
-            smoothed = (
-                2 * self.cpu_display_ema1[i] - self.cpu_display_ema2[i]
-                if self.EXTRA_SMOOTHING
-                else self.cpu_display_ema1[i]
-            )
-            usages.append(max(0.0, smoothed))
+            if self.SMOOTH_GRAPHS:
+                a = self.EMA_ALPHA
+                self.cpu_display_ema1[i] = a * self.cpu_display_ema1[i] + (1.0 - a) * raw
+                self.cpu_display_ema2[i] = a * self.cpu_display_ema2[i] + (1.0 - a) * self.cpu_display_ema1[i]
+                smoothed = (
+                    2 * self.cpu_display_ema1[i] - self.cpu_display_ema2[i]
+                    if self.EXTRA_SMOOTHING
+                    else self.cpu_display_ema1[i]
+                )
+                usages.append(max(0.0, smoothed))
+            else:
+                self.cpu_display_ema1[i] = raw
+                self.cpu_display_ema2[i] = raw
+                usages.append(raw)
 
         # Optional per-CPU frequency + average
         per_freq_mhz: Optional[List[float]] = None
@@ -739,15 +767,20 @@ class ResourcesTab(QtWidgets.QWidget):
         self.net_label.setText(self._net_label_text)
     # ---------- PLOT TIMER (graphs only) ----------
     def _update_plots(self):
-        # CPU: double-EMA toward the latest raw usage values for smooth lines
+        # CPU: optional smoothing toward the latest raw usage values
         a = self.EMA_ALPHA
         for i in range(self.n_cpu):
-            self.cpu_plot_ema1[i] = a * self.cpu_plot_ema1[i] + (1.0 - a) * self.cpu_last_raw[i]
-            if self.EXTRA_SMOOTHING:
-                self.cpu_plot_ema2[i] = a * self.cpu_plot_ema2[i] + (1.0 - a) * self.cpu_plot_ema1[i]
-                use_val = 2 * self.cpu_plot_ema1[i] - self.cpu_plot_ema2[i]
+            if self.SMOOTH_GRAPHS:
+                self.cpu_plot_ema1[i] = a * self.cpu_plot_ema1[i] + (1.0 - a) * self.cpu_last_raw[i]
+                if self.EXTRA_SMOOTHING:
+                    self.cpu_plot_ema2[i] = a * self.cpu_plot_ema2[i] + (1.0 - a) * self.cpu_plot_ema1[i]
+                    use_val = 2 * self.cpu_plot_ema1[i] - self.cpu_plot_ema2[i]
+                else:
+                    use_val = self.cpu_plot_ema1[i]
             else:
-                use_val = self.cpu_plot_ema1[i]
+                self.cpu_plot_ema1[i] = self.cpu_last_raw[i]
+                self.cpu_plot_ema2[i] = self.cpu_last_raw[i]
+                use_val = self.cpu_last_raw[i]
             use_val = max(0.0, use_val)
             self.cpu_histories[i].append(use_val)
             self.cpu_curves[i].setData(list(self.cpu_histories[i]))
@@ -760,8 +793,12 @@ class ResourcesTab(QtWidgets.QWidget):
             sm = None
         mem_val = vm.percent
         swap_val = sm.percent if sm and sm.total > 0 else 0.0
-        mem_ema = self.MEM_EMA_ALPHA * (self.mem_hist[-1] if self.mem_hist else 0.0) + (1.0 - self.MEM_EMA_ALPHA) * mem_val
-        swap_ema = self.MEM_EMA_ALPHA * (self.swap_hist[-1] if self.swap_hist else 0.0) + (1.0 - self.MEM_EMA_ALPHA) * swap_val
+        if self.SMOOTH_GRAPHS:
+            mem_ema = self.MEM_EMA_ALPHA * (self.mem_hist[-1] if self.mem_hist else 0.0) + (1.0 - self.MEM_EMA_ALPHA) * mem_val
+            swap_ema = self.MEM_EMA_ALPHA * (self.swap_hist[-1] if self.swap_hist else 0.0) + (1.0 - self.MEM_EMA_ALPHA) * swap_val
+        else:
+            mem_ema = mem_val
+            swap_ema = swap_val
 
         self.mem_hist.append(mem_ema)
         self.swap_hist.append(swap_ema)
@@ -788,18 +825,28 @@ class ResourcesTab(QtWidgets.QWidget):
         tx_kib = (cur.bytes_sent - self.prev_net.bytes_sent) / 1024.0 / dt
         self.prev_net, self.prev_t = cur, now
 
-        self.rx_hist.append(rx_kib)
-        self.tx_hist.append(tx_kib)
+        if self.SMOOTH_GRAPHS:
+            self.net_ema_rx = a * self.net_ema_rx + (1.0 - a) * rx_kib
+            self.net_ema_tx = a * self.net_ema_tx + (1.0 - a) * tx_kib
+            rx_use = self.net_ema_rx
+            tx_use = self.net_ema_tx
+        else:
+            self.net_ema_rx = rx_kib
+            self.net_ema_tx = tx_kib
+            rx_use = rx_kib
+            tx_use = tx_kib
+
+        self.rx_hist.append(rx_use)
+        self.tx_hist.append(tx_use)
         self.rx_curve.setData(self._x_vals, list(self.rx_hist))
         self.tx_curve.setData(self._x_vals, list(self.tx_hist))
 
         max_y = max(1.0, max(max(self.rx_hist), max(self.tx_hist)))
         self.net_plot.setYRange(0, max_y * 1.2)
-        step = max_y / max(1, self.GRID_DIVS)
-        self.net_plot.getAxis('left').setTickSpacing(step, step)
+        self._update_tick_steps(self.net_plot)
         self._net_label_text = (
-            f"Receiving {rx_kib:,.1f} KiB/s — Total {human_bytes(cur.bytes_recv)}     "
-            f"Sending {tx_kib:,.1f} KiB/s — Total {human_bytes(cur.bytes_sent)}"
+            f"<span style='color:#64b4ff'>Receiving {rx_use:,.1f} KiB/s</span> — Total {human_bytes(cur.bytes_recv)}     "
+            f"<span style='color:#ff7864'>Sending {tx_use:,.1f} KiB/s</span> — Total {human_bytes(cur.bytes_sent)}"
         )
 
 
@@ -1133,6 +1180,7 @@ class PreferencesDialog(QtWidgets.QDialog):
       - Thread line width (px)
       - Toggle X grid / Y grid
       - Grid squares per axis
+      - Smooth graphs (EMA filtering)
       - Extra smoothing (double-EMA) for CPU lines
       - Enable/disable antialiasing
     """
@@ -1195,8 +1243,13 @@ class PreferencesDialog(QtWidgets.QDialog):
         self.in_grid_divs.setRange(1, 20)
         self.in_grid_divs.setValue(resources_tab.GRID_DIVS)
 
+        self.in_smooth = QtWidgets.QCheckBox("Smooth graphs (EMA)")
+        self.in_smooth.setChecked(resources_tab.SMOOTH_GRAPHS)
+
         self.in_extra = QtWidgets.QCheckBox("Extra smoothing for CPU lines (double-EMA)")
         self.in_extra.setChecked(resources_tab.EXTRA_SMOOTHING)
+        self.in_extra.setEnabled(resources_tab.SMOOTH_GRAPHS)
+        self.in_smooth.toggled.connect(self.in_extra.setEnabled)
 
         self.in_antialias = QtWidgets.QCheckBox("Enable antialiasing (smooth curves)")
         self.in_antialias.setChecked(resources_tab.ANTIALIAS)
@@ -1213,6 +1266,7 @@ class PreferencesDialog(QtWidgets.QDialog):
         form.addRow(self.in_grid_x)
         form.addRow(self.in_grid_y)
         form.addRow("Grid squares per axis:", self.in_grid_divs)
+        form.addRow(self.in_smooth)
         form.addRow(self.in_extra)
         form.addRow(self.in_antialias)
 
@@ -1240,6 +1294,7 @@ class PreferencesDialog(QtWidgets.QDialog):
             bool(self.in_grid_x.isChecked()),
             bool(self.in_grid_y.isChecked()),
             int(self.in_grid_divs.value()),
+            bool(self.in_smooth.isChecked()),
             bool(self.in_extra.isChecked()),
             bool(self.in_antialias.isChecked()),
         )
@@ -1257,6 +1312,7 @@ class PreferencesDialog(QtWidgets.QDialog):
             grid_x,
             grid_y,
             grid_divs,
+            smooth,
             extra,
             antialias,
         ) = self._read_values()
@@ -1271,6 +1327,7 @@ class PreferencesDialog(QtWidgets.QDialog):
             grid_x,
             grid_y,
             grid_divs,
+            smooth,
             extra,
             antialias,
         )
