@@ -251,6 +251,38 @@ class LegendGrid(QtWidgets.QWidget):
                 lab.setText(f"{pct:,.1f}% · —")
 
 
+# ------------------------------- Collapsible section -------------------------------
+
+class CollapsibleSection(QtWidgets.QWidget):
+    """A simple widget that can hide or show its contents with a click."""
+
+    def __init__(self, title: str, parent=None):
+        super().__init__(parent)
+        self.toggle = QtWidgets.QToolButton(text=title, checkable=True, checked=True)
+        self.toggle.setStyleSheet("QToolButton { border: none; }")
+        self.toggle.setToolButtonStyle(QtCore.Qt.ToolButtonTextBesideIcon)
+        self.toggle.setArrowType(QtCore.Qt.DownArrow)
+        self.toggle.clicked.connect(self._on_toggle)
+
+        self.content = QtWidgets.QWidget()
+        self.content.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Fixed)
+        self.content_layout = QtWidgets.QVBoxLayout(self.content)
+        self.content_layout.setContentsMargins(0, 0, 0, 0)
+        self.content_layout.setSpacing(6)
+
+        layout = QtWidgets.QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.addWidget(self.toggle)
+        layout.addWidget(self.content)
+
+    def _on_toggle(self):
+        visible = self.toggle.isChecked()
+        self.content.setVisible(visible)
+        self.toggle.setArrowType(QtCore.Qt.DownArrow if visible else QtCore.Qt.RightArrow)
+
+    def add_widget(self, w: QtWidgets.QWidget):
+        self.content_layout.addWidget(w)
+
 # ------------------------------- Resources tab -------------------------------
 
 class ResourcesTab(QtWidgets.QWidget):
@@ -275,7 +307,9 @@ class ResourcesTab(QtWidgets.QWidget):
     THREAD_LINE_WIDTH = 1.5    # px
     SHOW_GRID_X       = True
     SHOW_GRID_Y       = True
+    GRID_DIVS         = 10
     ANTIALIAS         = True
+    PLOT_HEIGHT       = 200
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -302,6 +336,7 @@ class ResourcesTab(QtWidgets.QWidget):
         self.cpu_plot.setMouseEnabled(x=False, y=False)
         self.cpu_plot.setMenuEnabled(False)
         self.cpu_plot.setXRange(0, history_len - 1)
+        self.cpu_plot.setFixedHeight(self.PLOT_HEIGHT)
 
         # Colors & pens (HSV palette to start, user can override via legend)
         self.cpu_colors: List[QtGui.QColor] = []
@@ -347,6 +382,7 @@ class ResourcesTab(QtWidgets.QWidget):
         self.mem_plot.setMouseEnabled(x=False, y=False)
         self.mem_plot.setMenuEnabled(False)
         self.mem_plot.setXRange(0, history_len - 1)
+        self.mem_plot.setFixedHeight(self.PLOT_HEIGHT)
 
         self.mem_hist = deque([0.0] * history_len, maxlen=history_len)
         self.swap_hist = deque([0.0] * history_len, maxlen=history_len)
@@ -376,6 +412,7 @@ class ResourcesTab(QtWidgets.QWidget):
         self.net_plot.setMouseEnabled(x=False, y=False)
         self.net_plot.setMenuEnabled(False)
         self.net_plot.setXRange(0, history_len - 1)
+        self.net_plot.setFixedHeight(self.PLOT_HEIGHT)
 
         self.rx_hist = deque([0.0] * history_len, maxlen=history_len)
         self.tx_hist = deque([0.0] * history_len, maxlen=history_len)
@@ -389,13 +426,23 @@ class ResourcesTab(QtWidgets.QWidget):
         self._net_label_text = "Receiving —  Sending —"
 
         # ----- Assemble layout -----
-        layout.addWidget(self.cpu_plot, stretch=3)
-        layout.addWidget(self.cpu_legend_scroll)
-        layout.addWidget(self.cpu_freq_avg_label)
-        layout.addWidget(self.mem_plot, stretch=2)
-        layout.addWidget(self.mem_label)
-        layout.addWidget(self.net_plot, stretch=2)
-        layout.addWidget(self.net_label)
+        cpu_title = platform.processor() or platform.uname().processor or "Unknown"
+        self.cpu_section = CollapsibleSection(f"CPU: {cpu_title}")
+        self.cpu_section.add_widget(self.cpu_plot)
+        self.cpu_section.add_widget(self.cpu_legend_scroll)
+        self.cpu_section.add_widget(self.cpu_freq_avg_label)
+
+        self.mem_section = CollapsibleSection("Memory and Swap")
+        self.mem_section.add_widget(self.mem_plot)
+        self.mem_section.add_widget(self.mem_label)
+
+        self.net_section = CollapsibleSection("Network")
+        self.net_section.add_widget(self.net_plot)
+        self.net_section.add_widget(self.net_label)
+
+        layout.addWidget(self.cpu_section)
+        layout.addWidget(self.mem_section)
+        layout.addWidget(self.net_section)
 
         # ----- Initial state & timers -----
         self.prev_net = psutil.net_io_counters(pernic=False)
@@ -407,18 +454,27 @@ class ResourcesTab(QtWidgets.QWidget):
 
         psutil.cpu_percent(percpu=True)  # warm-up to set baselines
 
-        # Separate timers: plot vs stats
+        # Separate timers: plot vs stats (started when visible)
         self.plot_timer = QtCore.QTimer(self)
         self.plot_timer.timeout.connect(self._update_plots)
-        self.plot_timer.start(self.PLOT_UPDATE_MS)
 
         self.text_timer = QtCore.QTimer(self)
         self.text_timer.timeout.connect(self._update_text)
-        self.text_timer.start(self.TEXT_UPDATE_MS)
 
         self._apply_freq_visibility()
+        self._update_grid_ticks()
+
+    def showEvent(self, e: QtGui.QShowEvent):
+        self.plot_timer.start(self.PLOT_UPDATE_MS)
+        self.text_timer.start(self.TEXT_UPDATE_MS)
         self._update_plots()
         self._update_text()
+        super().showEvent(e)
+
+    def hideEvent(self, e: QtGui.QHideEvent):
+        self.plot_timer.stop()
+        self.text_timer.stop()
+        super().hideEvent(e)
 
     # ---------- helpers ----------
     def _history_len(self) -> int:
@@ -426,6 +482,14 @@ class ResourcesTab(QtWidgets.QWidget):
 
     def _apply_grid(self, plot: pg.PlotWidget):
         plot.showGrid(x=self.SHOW_GRID_X, y=self.SHOW_GRID_Y, alpha=0.2)
+
+    def _update_grid_ticks(self):
+        step_x = max(1, self._history_len() // max(1, self.GRID_DIVS))
+        for axis in (self.cpu_axis_bottom, self.mem_axis_bottom, self.net_axis_bottom):
+            axis.setTickSpacing(step_x, step_x)
+        step_y = 100 / max(1, self.GRID_DIVS)
+        for axis in (self.cpu_axis_left, self.mem_axis_left):
+            axis.setTickSpacing(step_y, step_y)
 
     def _on_color_change(self, cpu_index: int, color: QtGui.QColor):
         """Legend callback: update curve and local color store."""
@@ -477,7 +541,7 @@ class ResourcesTab(QtWidgets.QWidget):
         try:
             freqs = psutil.cpu_freq(percpu=True)
             if freqs:
-                per_freq_mhz = [getattr(f, 'current', 0.0) for f in freqs[:self.n_cpu]]
+                per_freq_mhz = [max(0.0, getattr(f, 'current', 0.0)) for f in freqs[:self.n_cpu]]
                 valid = [f for f in per_freq_mhz if f and f > 0]
                 if valid:
                     avg_freq = sum(valid) / len(valid)
@@ -504,6 +568,7 @@ class ResourcesTab(QtWidgets.QWidget):
         thread_line_width: float,
         show_grid_x: bool,
         show_grid_y: bool,
+        grid_divs: int,
         extra_smoothing: bool,
         antialias: bool,
     ):
@@ -517,15 +582,22 @@ class ResourcesTab(QtWidgets.QWidget):
         self.THREAD_LINE_WIDTH = float(max(0.5, thread_line_width))
         self.SHOW_GRID_X       = bool(show_grid_x)
         self.SHOW_GRID_Y       = bool(show_grid_y)
+        self.GRID_DIVS         = int(max(1, grid_divs))
         self.EXTRA_SMOOTHING   = bool(extra_smoothing)
         self.ANTIALIAS         = bool(antialias)
         pg.setConfigOptions(antialias=self.ANTIALIAS)
 
-        # Update timers
-        if self.plot_timer.isActive():  self.plot_timer.stop()
-        if self.text_timer.isActive(): self.text_timer.stop()
-        self.plot_timer.start(self.PLOT_UPDATE_MS)
-        self.text_timer.start(self.TEXT_UPDATE_MS)
+        # Update timers only if currently active
+        was_plot = self.plot_timer.isActive()
+        was_text = self.text_timer.isActive()
+        if was_plot:
+            self.plot_timer.stop()
+        if was_text:
+            self.text_timer.stop()
+        if was_plot:
+            self.plot_timer.start(self.PLOT_UPDATE_MS)
+        if was_text:
+            self.text_timer.start(self.TEXT_UPDATE_MS)
 
         # Axes / ranges / grids
         history_len = self._history_len()
@@ -534,6 +606,7 @@ class ResourcesTab(QtWidgets.QWidget):
         for plot in (self.cpu_plot, self.mem_plot, self.net_plot):
             plot.setXRange(0, history_len - 1)
             self._apply_grid(plot)
+        self._update_grid_ticks()
 
         # Rebuild buffers for graphs
         self.cpu_histories = [deque([0.0] * history_len, maxlen=history_len) for _ in range(self.n_cpu)]
@@ -561,14 +634,18 @@ class ResourcesTab(QtWidgets.QWidget):
         n = min(len(per), self.n_cpu)
         usages = []
         for i in range(n):
-            raw = float(per[i])
+            raw = max(0.0, float(per[i]))
             self.cpu_last_raw[i] = raw
             # Double EMA to tame spikes while keeping responsiveness
             a = self.EMA_ALPHA
             self.cpu_display_ema1[i] = a * self.cpu_display_ema1[i] + (1.0 - a) * raw
             self.cpu_display_ema2[i] = a * self.cpu_display_ema2[i] + (1.0 - a) * self.cpu_display_ema1[i]
-            smoothed = 2 * self.cpu_display_ema1[i] - self.cpu_display_ema2[i] if self.EXTRA_SMOOTHING else self.cpu_display_ema1[i]
-            usages.append(smoothed)
+            smoothed = (
+                2 * self.cpu_display_ema1[i] - self.cpu_display_ema2[i]
+                if self.EXTRA_SMOOTHING
+                else self.cpu_display_ema1[i]
+            )
+            usages.append(max(0.0, smoothed))
 
         # Optional per-CPU frequency + average
         per_freq_mhz: Optional[List[float]] = None
@@ -597,6 +674,7 @@ class ResourcesTab(QtWidgets.QWidget):
                 use_val = 2 * self.cpu_plot_ema1[i] - self.cpu_plot_ema2[i]
             else:
                 use_val = self.cpu_plot_ema1[i]
+            use_val = max(0.0, use_val)
             self.cpu_histories[i].append(use_val)
             self.cpu_curves[i].setData(list(self.cpu_histories[i]))
 
@@ -645,6 +723,8 @@ class ResourcesTab(QtWidgets.QWidget):
 
         max_y = max(1.0, max(max(self.rx_hist), max(self.tx_hist)))
         self.net_plot.setYRange(0, max_y * 1.2)
+        step = max_y / max(1, self.GRID_DIVS)
+        self.net_plot.getAxis('left').setTickSpacing(step, step)
         self._net_label_text = (
             f"Receiving {rx_kib:,.1f} KiB/s — Total {human_bytes(cur.bytes_recv)}     "
             f"Sending {tx_kib:,.1f} KiB/s — Total {human_bytes(cur.bytes_sent)}"
@@ -727,7 +807,7 @@ class ProcessesTab(QtWidgets.QWidget):
                 name = info.get('name') or ""
                 user = info.get('username') or ""
 
-                cpu = float(info.get('cpu_percent') or 0.0)
+                cpu = max(0.0, float(info.get('cpu_percent') or 0.0))
 
                 mem_txt, mem_sort = "—", 0
                 meminfo = info.get('memory_info')
@@ -973,6 +1053,7 @@ class PreferencesDialog(QtWidgets.QDialog):
       - Show per-CPU frequencies
       - Thread line width (px)
       - Toggle X grid / Y grid
+      - Grid squares per axis
       - Extra smoothing (double-EMA) for CPU lines
       - Enable/disable antialiasing
     """
@@ -1029,6 +1110,10 @@ class PreferencesDialog(QtWidgets.QDialog):
         self.in_grid_y = QtWidgets.QCheckBox("Show Y grid")
         self.in_grid_y.setChecked(resources_tab.SHOW_GRID_Y)
 
+        self.in_grid_divs = QtWidgets.QSpinBox()
+        self.in_grid_divs.setRange(1, 20)
+        self.in_grid_divs.setValue(resources_tab.GRID_DIVS)
+
         self.in_extra = QtWidgets.QCheckBox("Extra smoothing for CPU lines (double-EMA)")
         self.in_extra.setChecked(resources_tab.EXTRA_SMOOTHING)
 
@@ -1045,6 +1130,7 @@ class PreferencesDialog(QtWidgets.QDialog):
         form.addRow("Thread line width (px):", self.in_width)
         form.addRow(self.in_grid_x)
         form.addRow(self.in_grid_y)
+        form.addRow("Grid squares per axis:", self.in_grid_divs)
         form.addRow(self.in_extra)
         form.addRow(self.in_antialias)
 
@@ -1071,6 +1157,7 @@ class PreferencesDialog(QtWidgets.QDialog):
             float(self.in_width.value()),
             bool(self.in_grid_x.isChecked()),
             bool(self.in_grid_y.isChecked()),
+            int(self.in_grid_divs.value()),
             bool(self.in_extra.isChecked()),
             bool(self.in_antialias.isChecked()),
         )
@@ -1087,6 +1174,7 @@ class PreferencesDialog(QtWidgets.QDialog):
             width,
             grid_x,
             grid_y,
+            grid_divs,
             extra,
             antialias,
         ) = self._read_values()
@@ -1100,6 +1188,7 @@ class PreferencesDialog(QtWidgets.QDialog):
             width,
             grid_x,
             grid_y,
+            grid_divs,
             extra,
             antialias,
         )
