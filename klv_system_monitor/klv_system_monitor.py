@@ -11,6 +11,7 @@
 #                  (history, update cadences, EMA alphas, show per-CPU frequencies).
 #   - Separate plot vs text refresh intervals.
 #   - File Systems tab only lists active drives and refreshes on demand.
+#   - Processes tab refreshes only when visible and its interval is configurable.
 #
 # Dependencies: psutil, PyQt5, pyqtgraph
 # License: MIT (adjust as desired)
@@ -641,16 +642,10 @@ class ProcessesTab(QtWidgets.QWidget):
         self.prev_io: Dict[int, Tuple[int, int]] = {}
         self.prev_time = time.monotonic()
         self.row_for_pid: Dict[int, int] = {}
-
-        for p in psutil.process_iter(['pid']):
-            try:
-                p.cpu_percent(None)
-            except Exception:
-                pass
-
+        self.update_ms = self.UPDATE_MS
         self.timer = QtCore.QTimer(self)
         self.timer.timeout.connect(self.refresh)
-        self.timer.start(self.UPDATE_MS)
+        self._primed = False
 
     def _item(self, text: str, sort_value=None, tip: str = "") -> QtWidgets.QTableWidgetItem:
         it = QtWidgets.QTableWidgetItem(text)
@@ -755,6 +750,26 @@ class ProcessesTab(QtWidgets.QWidget):
             self.prev_time = now
             self.table.setUpdatesEnabled(True)
             self.table.setSortingEnabled(was_sorting)
+
+    def showEvent(self, e: QtGui.QShowEvent):
+        if not self._primed:
+            for p in psutil.process_iter(['pid']):
+                try:
+                    p.cpu_percent(None)
+                except Exception:
+                    pass
+            self._primed = True
+        self.timer.start(self.update_ms)
+        super().showEvent(e)
+
+    def hideEvent(self, e: QtGui.QHideEvent):
+        self.timer.stop()
+        super().hideEvent(e)
+
+    def set_update_ms(self, ms: int):
+        self.update_ms = max(50, int(ms))
+        if self.timer.isActive():
+            self.timer.start(self.update_ms)
 
 
 # ------------------------------- File Systems tab -------------------------------
@@ -899,10 +914,11 @@ class FileSystemsTab(QtWidgets.QWidget):
 
 class PreferencesDialog(QtWidgets.QDialog):
     """
-    Tune the Resources tab at runtime:
+    Tune refresh rates and the Resources tab at runtime:
       - History window (seconds)
       - Plot update interval (ms)  [graphs]
       - Text update interval (ms) [legend numbers & labels]
+      - Processes refresh interval (ms)
       - CPU EMA alpha
       - Memory EMA alpha
       - Show per-CPU frequencies
@@ -911,10 +927,11 @@ class PreferencesDialog(QtWidgets.QDialog):
       - Extra smoothing (double-EMA) for CPU lines
       - Enable/disable antialiasing
     """
-    def __init__(self, resources_tab: ResourcesTab, parent=None):
+    def __init__(self, resources_tab: ResourcesTab, processes_tab: ProcessesTab, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Preferences")
         self.resources_tab = resources_tab
+        self.processes_tab = processes_tab
 
         form = QtWidgets.QFormLayout()
         form.setLabelAlignment(QtCore.Qt.AlignRight)
@@ -932,6 +949,11 @@ class PreferencesDialog(QtWidgets.QDialog):
         self.in_text.setRange(50, 5000)
         self.in_text.setSingleStep(10)
         self.in_text.setValue(resources_tab.TEXT_UPDATE_MS)
+
+        self.in_proc = QtWidgets.QSpinBox()
+        self.in_proc.setRange(50, 10000)
+        self.in_proc.setSingleStep(50)
+        self.in_proc.setValue(processes_tab.update_ms)
 
         self.in_ema = QtWidgets.QDoubleSpinBox()
         self.in_ema.setDecimals(3)
@@ -967,6 +989,7 @@ class PreferencesDialog(QtWidgets.QDialog):
         form.addRow("History window (seconds):", self.in_history)
         form.addRow("Plot update interval (ms):", self.in_plot)
         form.addRow("Text update interval (ms):", self.in_text)
+        form.addRow("Processes refresh interval (ms):", self.in_proc)
         form.addRow("CPU EMA alpha (0–0.999):", self.in_ema)
         form.addRow("Memory EMA alpha (0–0.999):", self.in_mem_ema)
         form.addRow(self.in_show_freq)
@@ -992,6 +1015,7 @@ class PreferencesDialog(QtWidgets.QDialog):
             int(self.in_history.value()),
             int(self.in_plot.value()),
             int(self.in_text.value()),
+            int(self.in_proc.value()),
             float(self.in_ema.value()),
             float(self.in_mem_ema.value()),
             bool(self.in_show_freq.isChecked()),
@@ -1003,7 +1027,34 @@ class PreferencesDialog(QtWidgets.QDialog):
         )
 
     def apply(self):
-        self.resources_tab.apply_settings(*self._read_values())
+        (
+            history,
+            plot_ms,
+            text_ms,
+            proc_ms,
+            ema,
+            mem_ema,
+            show_freq,
+            width,
+            grid_x,
+            grid_y,
+            extra,
+            antialias,
+        ) = self._read_values()
+        self.resources_tab.apply_settings(
+            history,
+            plot_ms,
+            text_ms,
+            ema,
+            mem_ema,
+            show_freq,
+            width,
+            grid_x,
+            grid_y,
+            extra,
+            antialias,
+        )
+        self.processes_tab.set_update_ms(proc_ms)
 
     def accept(self):
         self.apply()
@@ -1048,7 +1099,7 @@ class MainWindow(QtWidgets.QMainWindow):
         tb.addWidget(spacer)
 
     def open_preferences(self):
-        dlg = PreferencesDialog(self.resources_tab, self)
+        dlg = PreferencesDialog(self.resources_tab, self.processes_tab, self)
         dlg.exec_()
 
 

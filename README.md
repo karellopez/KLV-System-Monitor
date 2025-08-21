@@ -9,4 +9,6 @@ Recent updates further reduce the monitor's own CPU usage by batching
 per-process information retrieval, decoupling plot and text refresh rates,
 and refreshing the file system view only on demand. Graph antialiasing is
 enabled again for crisp rendering and can now be toggled in Preferences.
+The Processes tab now updates only when visible, and its refresh interval is
+configurable via the Preferences dialog.
 
