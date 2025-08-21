@@ -543,27 +543,95 @@ class ResourcesTab(QtWidgets.QWidget):
         plot.showGrid(x=self.SHOW_GRID_X, y=self.SHOW_GRID_Y, alpha=0.2)
 
     def _update_tick_steps(self, plot: Optional[pg.PlotWidget] = None):
+        """
+        Choose tick steps that look good and stay visible even on small plots.
+        - CPU & Memory: force Y range to 0..100 and choose a step that divides 100
+          so we always hit nice ticks like 0,20,40,60,80,100.
+        - X axis: pick from a 'nice' time step family so labels don't disappear.
+        - Network: adaptive 1-2-5 step on current range.
+        """
+        import math
+
         plots = [plot] if plot else [self.cpu_plot, self.mem_plot, self.net_plot]
-        interval = self.PLOT_UPDATE_MS / 1000.0
-        total_secs = (self._history_len() - 1) * interval
+
+        # How dense can we label before things collide (rough heuristics, px/label)
+        PX_PER_LABEL_X = 90
+        PX_PER_LABEL_Y = 30
+
+        # Always keep at least this many labels per axis visible
+        MIN_LABELS_X = 4
+        MIN_LABELS_Y = 3
+
+        # Time axis helpers
+        interval = self.PLOT_UPDATE_MS / 1000.0  # seconds per sample
+        hist_len = self._history_len()
+        total_secs = (hist_len - 1) * interval
+        nice_time_steps = [1, 2, 5, 10, 15, 20, 30, 60, 120, 300, 600]
+
+        # Nice step rounding (1-2-5 progression)
+        def nice125(x: float) -> float:
+            if x <= 0:
+                return 1.0
+            exp = math.floor(math.log10(x))
+            frac = x / (10 ** exp)
+            if frac <= 1.0:
+                nice = 1.0
+            elif frac <= 2.0:
+                nice = 2.0
+            elif frac <= 5.0:
+                nice = 5.0
+            else:
+                nice = 10.0
+            return nice * (10 ** exp)
+
         for p in plots:
-            width = max(1, p.size().width())
-            max_labels_x = max(2, int(width / 80))
-            max_labels_x = min(self.GRID_DIVS + 1, max_labels_x)
-            raw_step_sec = total_secs / (max_labels_x - 1)
-            step_sec = 10 * math.ceil(raw_step_sec / 10.0)
+            width = max(1, int(p.size().width()))
+            height = max(1, int(p.size().height()))
+
+            # ---------------- X axis (time) ----------------
+            # Target how many labels fit across the width.
+            target_lbls_x = max(MIN_LABELS_X, min(self.GRID_DIVS + 1, width // PX_PER_LABEL_X))
+            # Step in *seconds* that would produce ~target_lbls_x labels:
+            raw_step_sec = max(interval, total_secs / max(1, (target_lbls_x - 1)))
+            # Snap to a nice value from the curated list (closest)
+            step_sec = min(nice_time_steps, key=lambda s: abs(s - raw_step_sec))
+            # Convert seconds -> samples (our X domain is 0..hist_len-1)
             step_x = max(1, int(round(step_sec / interval)))
             p.getAxis('bottom').setTickSpacing(step_x, step_x)
 
-            height = max(1, p.size().height())
-            max_labels_y = max(2, int(height / 40))
-            max_labels_y = min(self.GRID_DIVS + 1, max_labels_y)
-            y_min, y_max = p.viewRange()[1]
-            y_range = max(1.0, y_max - y_min)
-            base = 10 if p in (self.cpu_plot, self.mem_plot) else 100
-            raw_step = y_range / (max_labels_y - 1)
-            step_val = base * math.ceil(raw_step / base)
-            p.getAxis('left').setTickSpacing(step_val, step_val)
+            # ---------------- Y axis (values) ----------------
+            if p in (self.cpu_plot, self.mem_plot):
+                # Lock Y to 0..100 so CPU/Mem always show percentages consistently.
+                p.setYRange(0, 100)
+
+                # Candidate steps that *divide 100* → ensure 0 and 100 land on ticks.
+                cpu_mem_steps = [1, 2, 4, 5, 10, 20, 25, 50]
+
+                # How many labels can we fit vertically?
+                target_lbls_y = max(MIN_LABELS_Y, min(self.GRID_DIVS + 1, height // PX_PER_LABEL_Y))
+
+                # The "ideal" step for that label count on a 0..100 range:
+                raw_step_y = 100.0 / max(1, (target_lbls_y - 1))
+
+                # Pick the candidate that's closest to the ideal (but still divides 100)
+                step_y = min(cpu_mem_steps, key=lambda s: abs(s - raw_step_y))
+
+                # Extra safety: if chosen step would yield fewer than MIN_LABELS_Y,
+                # clamp it down so we still meet the minimum label count.
+                max_step_for_min = 100.0 / max(1, (MIN_LABELS_Y - 1))  # e.g., for 4 labels → 33.33
+                step_y = min(step_y, max_step_for_min)
+
+                p.getAxis('left').setTickSpacing(step_y, step_y)
+
+            else:
+                # Network (dynamic): choose a 1-2-5 step on the current view range.
+                (y_min, y_max) = p.viewRange()[1]
+                y_range = max(1.0, float(y_max - y_min))
+                target_lbls_y = max(MIN_LABELS_Y, min(self.GRID_DIVS + 1, height // PX_PER_LABEL_Y))
+                raw_step_y = y_range / max(1, (target_lbls_y - 1))
+                step_y = nice125(raw_step_y)
+                p.getAxis('left').setTickSpacing(step_y, step_y)
+
 
     def _on_color_change(self, cpu_index: int, color: QtGui.QColor):
         """Legend callback: update curve and local color store."""
@@ -860,7 +928,7 @@ class ProcessesTab(QtWidgets.QWidget):
       - Rows updated in place; removals done in descending order.
       - Caches cleaned when processes exit (no growth over time).
     """
-    UPDATE_MS = 1000
+    UPDATE_MS = 3000
     COLUMNS = [
         "Process Name", "User", "% CPU", "ID",
         "Memory", "Disk read total", "Disk write total",
