@@ -24,6 +24,7 @@ from typing import Dict, Tuple, List, Optional
 import psutil
 import platform
 import subprocess
+import threading
 from PyQt5 import QtWidgets, QtCore, QtGui
 import pyqtgraph as pg
 
@@ -50,6 +51,35 @@ def human_freq(mhz: Optional[float]) -> str:
     if mhz is None or mhz <= 0:
         return "—"
     return f"{mhz/1000.0:.2f} GHz" if mhz >= 1000.0 else f"{mhz:.0f} MHz"
+
+
+def get_cpu_model() -> str:
+    """Return a readable CPU model string (best effort across OSes)."""
+    try:
+        system = platform.system()
+        if system == "Linux":
+            try:
+                with open("/proc/cpuinfo", "r", encoding="utf-8", errors="ignore") as f:
+                    for line in f:
+                        if line.lower().startswith("model name"):
+                            return line.split(":", 1)[1].strip()
+            except Exception:
+                pass
+        elif system == "Darwin":
+            try:
+                out = subprocess.check_output(
+                    ["sysctl", "-n", "machdep.cpu.brand_string"], text=True
+                )
+                return out.strip()
+            except Exception:
+                pass
+        elif system == "Windows":
+            name = platform.processor()
+            if name:
+                return name
+    except Exception:
+        pass
+    return platform.processor() or platform.uname().processor or "Unknown"
 
 def set_dark_palette(app: QtWidgets.QApplication):
     """Apply a dark Fusion palette + small style tweaks."""
@@ -265,7 +295,9 @@ class CollapsibleSection(QtWidgets.QWidget):
         self.toggle.clicked.connect(self._on_toggle)
 
         self.content = QtWidgets.QWidget()
-        self.content.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Fixed)
+        self.content.setSizePolicy(
+            QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Expanding
+        )
         self.content_layout = QtWidgets.QVBoxLayout(self.content)
         self.content_layout.setContentsMargins(0, 0, 0, 0)
         self.content_layout.setSpacing(6)
@@ -274,6 +306,10 @@ class CollapsibleSection(QtWidgets.QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.addWidget(self.toggle)
         layout.addWidget(self.content)
+
+        self.setSizePolicy(
+            QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Expanding
+        )
 
     def _on_toggle(self):
         visible = self.toggle.isChecked()
@@ -336,7 +372,10 @@ class ResourcesTab(QtWidgets.QWidget):
         self.cpu_plot.setMouseEnabled(x=False, y=False)
         self.cpu_plot.setMenuEnabled(False)
         self.cpu_plot.setXRange(0, history_len - 1)
-        self.cpu_plot.setFixedHeight(self.PLOT_HEIGHT)
+        self.cpu_plot.setMinimumHeight(self.PLOT_HEIGHT)
+        self.cpu_plot.setSizePolicy(
+            QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Expanding
+        )
 
         # Colors & pens (HSV palette to start, user can override via legend)
         self.cpu_colors: List[QtGui.QColor] = []
@@ -382,7 +421,10 @@ class ResourcesTab(QtWidgets.QWidget):
         self.mem_plot.setMouseEnabled(x=False, y=False)
         self.mem_plot.setMenuEnabled(False)
         self.mem_plot.setXRange(0, history_len - 1)
-        self.mem_plot.setFixedHeight(self.PLOT_HEIGHT)
+        self.mem_plot.setMinimumHeight(self.PLOT_HEIGHT)
+        self.mem_plot.setSizePolicy(
+            QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Expanding
+        )
 
         self.mem_hist = deque([0.0] * history_len, maxlen=history_len)
         self.swap_hist = deque([0.0] * history_len, maxlen=history_len)
@@ -412,7 +454,10 @@ class ResourcesTab(QtWidgets.QWidget):
         self.net_plot.setMouseEnabled(x=False, y=False)
         self.net_plot.setMenuEnabled(False)
         self.net_plot.setXRange(0, history_len - 1)
-        self.net_plot.setFixedHeight(self.PLOT_HEIGHT)
+        self.net_plot.setMinimumHeight(self.PLOT_HEIGHT)
+        self.net_plot.setSizePolicy(
+            QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Expanding
+        )
 
         self.rx_hist = deque([0.0] * history_len, maxlen=history_len)
         self.tx_hist = deque([0.0] * history_len, maxlen=history_len)
@@ -426,7 +471,7 @@ class ResourcesTab(QtWidgets.QWidget):
         self._net_label_text = "Receiving —  Sending —"
 
         # ----- Assemble layout -----
-        cpu_title = platform.processor() or platform.uname().processor or "Unknown"
+        cpu_title = get_cpu_model()
         self.cpu_section = CollapsibleSection(f"CPU: {cpu_title}")
         self.cpu_section.add_widget(self.cpu_plot)
         self.cpu_section.add_widget(self.cpu_legend_scroll)
@@ -440,9 +485,9 @@ class ResourcesTab(QtWidgets.QWidget):
         self.net_section.add_widget(self.net_plot)
         self.net_section.add_widget(self.net_label)
 
-        layout.addWidget(self.cpu_section)
-        layout.addWidget(self.mem_section)
-        layout.addWidget(self.net_section)
+        layout.addWidget(self.cpu_section, 1)
+        layout.addWidget(self.mem_section, 1)
+        layout.addWidget(self.net_section, 1)
 
         # ----- Initial state & timers -----
         self.prev_net = psutil.net_io_counters(pernic=False)
@@ -451,6 +496,9 @@ class ResourcesTab(QtWidgets.QWidget):
         self.cpu_last_raw = [0.0] * self.n_cpu
         self.cpu_display_ema1 = [0.0] * self.n_cpu  # legend smoothing (double-EMA)
         self.cpu_display_ema2 = [0.0] * self.n_cpu
+
+        self._win_freqs_cache: Tuple[Optional[List[float]], Optional[float]] = (None, None)
+        self._win_freqs_thread: Optional[threading.Thread] = None
 
         psutil.cpu_percent(percpu=True)  # warm-up to set baselines
 
@@ -501,6 +549,17 @@ class ResourcesTab(QtWidgets.QWidget):
     def _apply_freq_visibility(self):
         self.cpu_freq_avg_label.setVisible(self.SHOW_CPU_FREQ)
 
+    def _windows_freq_worker(self):
+        self._win_freqs_cache = self._windows_cpu_freqs()
+        self._win_freqs_thread = None
+
+    def _schedule_windows_freqs(self):
+        if self._win_freqs_thread is None or not self._win_freqs_thread.is_alive():
+            self._win_freqs_thread = threading.Thread(
+                target=self._windows_freq_worker, daemon=True
+            )
+            self._win_freqs_thread.start()
+
     def _windows_cpu_freqs(self) -> Tuple[Optional[List[float]], Optional[float]]:
         """Fetch per-CPU frequencies on Windows via Get-Counter.
 
@@ -549,7 +608,8 @@ class ResourcesTab(QtWidgets.QWidget):
             pass
 
         if platform.system() == "Windows":
-            win_freqs, win_avg = self._windows_cpu_freqs()
+            self._schedule_windows_freqs()
+            win_freqs, win_avg = self._win_freqs_cache
             if win_freqs:
                 per_freq_mhz = win_freqs[:self.n_cpu]
                 avg_freq = win_avg
