@@ -552,9 +552,12 @@ class ResourcesTab(QtWidgets.QWidget):
 
         # Memory / Swap (EMA)
         vm = psutil.virtual_memory()
-        sm = psutil.swap_memory()
+        try:
+            sm = psutil.swap_memory()
+        except Exception:
+            sm = None
         mem_val = vm.percent
-        swap_val = sm.percent if sm.total > 0 else 0.0
+        swap_val = sm.percent if sm and sm.total > 0 else 0.0
         mem_ema = self.MEM_EMA_ALPHA * (self.mem_hist[-1] if self.mem_hist else 0.0) + (1.0 - self.MEM_EMA_ALPHA) * mem_val
         swap_ema = self.MEM_EMA_ALPHA * (self.swap_hist[-1] if self.swap_hist else 0.0) + (1.0 - self.MEM_EMA_ALPHA) * swap_val
 
@@ -567,7 +570,11 @@ class ResourcesTab(QtWidgets.QWidget):
         self.swap_base.setData(x, [0] * len(x))
 
         cache_txt = f"Cache {human_bytes(getattr(vm, 'cached', 0))}" if getattr(vm, 'cached', 0) else "Cache —"
-        swap_txt = "Swap not available" if sm.total == 0 else f"Swap {swap_ema:.1f}% of {human_bytes(sm.total)}"
+        swap_txt = (
+            "Swap not available"
+            if not sm or sm.total == 0
+            else f"Swap {swap_ema:.1f}% of {human_bytes(sm.total)}"
+        )
         self._mem_label_text = (
             f"Memory {human_bytes(vm.used)} ({mem_ema:.1f}%) of {human_bytes(vm.total)} — {cache_txt}   |   {swap_txt}"
         )
