@@ -53,34 +53,6 @@ def human_freq(mhz: Optional[float]) -> str:
     return f"{mhz/1000.0:.2f} GHz" if mhz >= 1000.0 else f"{mhz:.0f} MHz"
 
 
-def get_cpu_model() -> str:
-    """Return a readable CPU model string (best effort across OSes)."""
-    try:
-        system = platform.system()
-        if system == "Linux":
-            try:
-                with open("/proc/cpuinfo", "r", encoding="utf-8", errors="ignore") as f:
-                    for line in f:
-                        if line.lower().startswith("model name"):
-                            return line.split(":", 1)[1].strip()
-            except Exception:
-                pass
-        elif system == "Darwin":
-            try:
-                out = subprocess.check_output(
-                    ["sysctl", "-n", "machdep.cpu.brand_string"], text=True
-                )
-                return out.strip()
-            except Exception:
-                pass
-        elif system == "Windows":
-            name = platform.processor()
-            if name:
-                return name
-    except Exception:
-        pass
-    return platform.processor() or platform.uname().processor or "Unknown"
-
 def set_dark_palette(app: QtWidgets.QApplication):
     """Apply a dark Fusion palette + small style tweaks."""
     app.setStyle("Fusion")
@@ -315,6 +287,17 @@ class CollapsibleSection(QtWidgets.QWidget):
         visible = self.toggle.isChecked()
         self.content.setVisible(visible)
         self.toggle.setArrowType(QtCore.Qt.DownArrow if visible else QtCore.Qt.RightArrow)
+        self.setSizePolicy(
+            QtWidgets.QSizePolicy.Expanding,
+            QtWidgets.QSizePolicy.Expanding if visible else QtWidgets.QSizePolicy.Fixed,
+        )
+        parent = self.parentWidget()
+        if parent is not None:
+            layout = parent.layout()
+            if layout is not None:
+                idx = layout.indexOf(self)
+                if idx != -1:
+                    layout.setStretch(idx, 1 if visible else 0)
 
     def add_widget(self, w: QtWidgets.QWidget):
         self.content_layout.addWidget(w)
@@ -345,7 +328,6 @@ class ResourcesTab(QtWidgets.QWidget):
     SHOW_GRID_Y       = True
     GRID_DIVS         = 10
     ANTIALIAS         = True
-    PLOT_HEIGHT       = 200
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -372,7 +354,6 @@ class ResourcesTab(QtWidgets.QWidget):
         self.cpu_plot.setMouseEnabled(x=False, y=False)
         self.cpu_plot.setMenuEnabled(False)
         self.cpu_plot.setXRange(0, history_len - 1)
-        self.cpu_plot.setMinimumHeight(self.PLOT_HEIGHT)
         self.cpu_plot.setSizePolicy(
             QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Expanding
         )
@@ -421,22 +402,23 @@ class ResourcesTab(QtWidgets.QWidget):
         self.mem_plot.setMouseEnabled(x=False, y=False)
         self.mem_plot.setMenuEnabled(False)
         self.mem_plot.setXRange(0, history_len - 1)
-        self.mem_plot.setMinimumHeight(self.PLOT_HEIGHT)
         self.mem_plot.setSizePolicy(
             QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Expanding
         )
 
+        self._x_vals = list(range(history_len))
+        self._zeros = [0] * history_len
         self.mem_hist = deque([0.0] * history_len, maxlen=history_len)
         self.swap_hist = deque([0.0] * history_len, maxlen=history_len)
 
-        self.mem_base = pg.PlotCurveItem([0] * history_len, pen=None)
+        self.mem_base = pg.PlotCurveItem(self._x_vals, self._zeros, pen=None)
         self.mem_curve = pg.PlotCurveItem(pen=pg.mkPen(width=2))
         self.mem_fill = pg.FillBetweenItem(self.mem_curve, self.mem_base, brush=(60, 130, 200, 80))
         self.mem_plot.addItem(self.mem_base)
         self.mem_plot.addItem(self.mem_curve)
         self.mem_plot.addItem(self.mem_fill)
 
-        self.swap_base = pg.PlotCurveItem([0] * history_len, pen=None)
+        self.swap_base = pg.PlotCurveItem(self._x_vals, self._zeros, pen=None)
         self.swap_curve = pg.PlotCurveItem(pen=pg.mkPen((200, 120, 60), width=2, style=QtCore.Qt.DashLine))
         self.swap_fill = pg.FillBetweenItem(self.swap_curve, self.swap_base, brush=(200, 120, 60, 60))
         self.mem_plot.addItem(self.swap_base)
@@ -454,15 +436,14 @@ class ResourcesTab(QtWidgets.QWidget):
         self.net_plot.setMouseEnabled(x=False, y=False)
         self.net_plot.setMenuEnabled(False)
         self.net_plot.setXRange(0, history_len - 1)
-        self.net_plot.setMinimumHeight(self.PLOT_HEIGHT)
         self.net_plot.setSizePolicy(
             QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Expanding
         )
 
         self.rx_hist = deque([0.0] * history_len, maxlen=history_len)
         self.tx_hist = deque([0.0] * history_len, maxlen=history_len)
-        self.rx_curve = self.net_plot.plot([0] * history_len, pen=pg.mkPen((100, 180, 255), width=2))
-        self.tx_curve = self.net_plot.plot([0] * history_len, pen=pg.mkPen((255, 120, 100), width=2))
+        self.rx_curve = self.net_plot.plot(self._x_vals, self._zeros, pen=pg.mkPen((100, 180, 255), width=2))
+        self.tx_curve = self.net_plot.plot(self._x_vals, self._zeros, pen=pg.mkPen((255, 120, 100), width=2))
         self.net_label = QtWidgets.QLabel("Receiving —  Sending —")
         self.net_label.setStyleSheet("color:white;")
 
@@ -471,8 +452,7 @@ class ResourcesTab(QtWidgets.QWidget):
         self._net_label_text = "Receiving —  Sending —"
 
         # ----- Assemble layout -----
-        cpu_title = get_cpu_model()
-        self.cpu_section = CollapsibleSection(f"CPU: {cpu_title}")
+        self.cpu_section = CollapsibleSection("CPU")
         self.cpu_section.add_widget(self.cpu_plot)
         self.cpu_section.add_widget(self.cpu_legend_scroll)
         self.cpu_section.add_widget(self.cpu_freq_avg_label)
@@ -677,12 +657,16 @@ class ResourcesTab(QtWidgets.QWidget):
         self.cpu_plot_ema1 = [0.0] * self.n_cpu
         self.cpu_plot_ema2 = [0.0] * self.n_cpu
 
+        self._x_vals = list(range(history_len))
+        self._zeros = [0] * history_len
         self.mem_hist = deque([0.0] * history_len, maxlen=history_len)
         self.swap_hist = deque([0.0] * history_len, maxlen=history_len)
-        self.mem_base.setData(list(range(history_len)), [0] * history_len)
-        self.swap_base.setData(list(range(history_len)), [0] * history_len)
+        self.mem_base.setData(self._x_vals, self._zeros)
+        self.swap_base.setData(self._x_vals, self._zeros)
         self.rx_hist = deque([0.0] * history_len, maxlen=history_len)
         self.tx_hist = deque([0.0] * history_len, maxlen=history_len)
+        self.rx_curve.setData(self._x_vals, self._zeros)
+        self.tx_curve.setData(self._x_vals, self._zeros)
 
         # Frequencies visibility
         self._apply_freq_visibility()
@@ -751,11 +735,10 @@ class ResourcesTab(QtWidgets.QWidget):
 
         self.mem_hist.append(mem_ema)
         self.swap_hist.append(swap_ema)
-        x = list(range(len(self.mem_hist)))
-        self.mem_curve.setData(x, list(self.mem_hist))
-        self.mem_base.setData(x, [0] * len(x))
-        self.swap_curve.setData(x, list(self.swap_hist))
-        self.swap_base.setData(x, [0] * len(x))
+        self.mem_curve.setData(self._x_vals, list(self.mem_hist))
+        self.mem_base.setData(self._x_vals, self._zeros)
+        self.swap_curve.setData(self._x_vals, list(self.swap_hist))
+        self.swap_base.setData(self._x_vals, self._zeros)
 
         cache_txt = f"Cache {human_bytes(getattr(vm, 'cached', 0))}" if getattr(vm, 'cached', 0) else "Cache —"
         swap_txt = (
@@ -777,9 +760,8 @@ class ResourcesTab(QtWidgets.QWidget):
 
         self.rx_hist.append(rx_kib)
         self.tx_hist.append(tx_kib)
-        x = list(range(len(self.rx_hist)))
-        self.rx_curve.setData(x, list(self.rx_hist))
-        self.tx_curve.setData(x, list(self.tx_hist))
+        self.rx_curve.setData(self._x_vals, list(self.rx_hist))
+        self.tx_curve.setData(self._x_vals, list(self.tx_hist))
 
         max_y = max(1.0, max(max(self.rx_hist), max(self.tx_hist)))
         self.net_plot.setYRange(0, max_y * 1.2)
@@ -844,7 +826,14 @@ class ProcessesTab(QtWidgets.QWidget):
 
     def _set_row(self, row: int, cols):
         for c, (txt, sortv, tip) in enumerate(cols):
-            self.table.setItem(row, c, self._item(txt, sortv, tip))
+            it = self.table.item(row, c)
+            if it is None:
+                it = self._item(txt, sortv, tip)
+                self.table.setItem(row, c, it)
+            else:
+                it.setText(txt)
+                it.setToolTip(tip if tip else txt)
+                it.setData(QtCore.Qt.UserRole, txt if sortv is None else sortv)
 
     def refresh(self):
         now = time.monotonic()
