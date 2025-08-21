@@ -22,6 +22,8 @@ from collections import deque
 from typing import Dict, Tuple, List, Optional
 
 import psutil
+import platform
+import subprocess
 from PyQt5 import QtWidgets, QtCore, QtGui
 import pyqtgraph as pg
 
@@ -435,6 +437,61 @@ class ResourcesTab(QtWidgets.QWidget):
     def _apply_freq_visibility(self):
         self.cpu_freq_avg_label.setVisible(self.SHOW_CPU_FREQ)
 
+    def _windows_cpu_freqs(self) -> Tuple[Optional[List[float]], Optional[float]]:
+        """Fetch per-CPU frequencies on Windows via Get-Counter.
+
+        Returns a list of frequencies in MHz and their average. If unavailable,
+        returns (None, None).
+        """
+        try:
+            cmd = [
+                "powershell",
+                "-NoProfile",
+                "-Command",
+                r"(Get-Counter '\\Processor Information(*)\\Processor Frequency').CounterSamples | ForEach-Object { $_.InstanceName + '=' + $_.CookedValue }",
+            ]
+            out = subprocess.check_output(cmd, text=True)
+            freqs: List[float] = []
+            for line in out.strip().splitlines():
+                line = line.strip()
+                if not line or "=" not in line:
+                    continue
+                name, val = line.split("=", 1)
+                if name.strip().lower() == "_total":
+                    continue
+                try:
+                    freqs.append(float(val))
+                except ValueError:
+                    pass
+            if freqs:
+                avg = sum(freqs) / len(freqs)
+                return freqs, avg
+        except Exception:
+            pass
+        return None, None
+
+    def _get_cpu_freqs(self) -> Tuple[Optional[List[float]], Optional[float]]:
+        """Return per-CPU and average frequency in MHz, with Windows fallback."""
+        per_freq_mhz: Optional[List[float]] = None
+        avg_freq: Optional[float] = None
+        try:
+            freqs = psutil.cpu_freq(percpu=True)
+            if freqs:
+                per_freq_mhz = [getattr(f, 'current', 0.0) for f in freqs[:self.n_cpu]]
+                valid = [f for f in per_freq_mhz if f and f > 0]
+                if valid:
+                    avg_freq = sum(valid) / len(valid)
+        except Exception:
+            pass
+
+        if platform.system() == "Windows":
+            win_freqs, win_avg = self._windows_cpu_freqs()
+            if win_freqs:
+                per_freq_mhz = win_freqs[:self.n_cpu]
+                avg_freq = win_avg
+
+        return per_freq_mhz, avg_freq
+
     # ---------- public API (Preferences) ----------
     def apply_settings(
         self,
@@ -517,15 +574,7 @@ class ResourcesTab(QtWidgets.QWidget):
         per_freq_mhz: Optional[List[float]] = None
         avg_freq = None
         if self.SHOW_CPU_FREQ:
-            try:
-                freqs = psutil.cpu_freq(percpu=True)
-                if freqs:
-                    per_freq_mhz = [getattr(f, 'current', 0.0) for f in freqs[:self.n_cpu]]
-                    valid = [f for f in per_freq_mhz if f and f > 0]
-                    if valid:
-                        avg_freq = sum(valid) / len(valid)
-            except Exception:
-                pass
+            per_freq_mhz, avg_freq = self._get_cpu_freqs()
 
         self.cpu_legend_grid.set_values(usages, per_freq_mhz)
         self.cpu_freq_avg_label.setVisible(self.SHOW_CPU_FREQ)
@@ -1074,8 +1123,9 @@ class MainWindow(QtWidgets.QMainWindow):
         self.processes_tab   = ProcessesTab()
         self.resources_tab   = ResourcesTab()
         self.filesystems_tab = FileSystemsTab()
-        self.tabs.addTab(self.processes_tab,  "Processes")
+        # Show Resources first by default
         self.tabs.addTab(self.resources_tab,  "Resources")
+        self.tabs.addTab(self.processes_tab,  "Processes")
         self.tabs.addTab(self.filesystems_tab,"File Systems")
 
         # Put centered tabs into the main area
