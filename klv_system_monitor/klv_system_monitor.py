@@ -1738,7 +1738,7 @@ class MainWindow(QtWidgets.QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("KLV System Monitor")
-        self.resize(860, 900)
+        self.resize(860, 950)
 
         # Centered tabs
         self.tabs = CenteredTabWidget()
