@@ -18,6 +18,7 @@
 
 import sys
 import time
+import json
 from collections import deque
 from typing import Dict, Tuple, List, Optional
 from pathlib import Path
@@ -31,6 +32,9 @@ import pyqtgraph as pg
 
 # Directory used to store persistent user preferences
 PREF_DIR = Path(__file__).resolve().parent / "user_preferences"
+
+# Default theme name (also used when restoring preferences)
+DEFAULT_THEME = "Deep Dark"
 
 # Simple OS helpers
 IS_WINDOWS = platform.system() == "Windows"
@@ -1611,11 +1615,17 @@ class PreferencesDialog(QtWidgets.QDialog):
         form.addRow("Theme:", self.in_theme)
 
         btns = QtWidgets.QDialogButtonBox(
-            QtWidgets.QDialogButtonBox.Ok | QtWidgets.QDialogButtonBox.Apply | QtWidgets.QDialogButtonBox.Cancel
+            QtWidgets.QDialogButtonBox.Ok
+            | QtWidgets.QDialogButtonBox.Apply
+            | QtWidgets.QDialogButtonBox.Cancel
+            | QtWidgets.QDialogButtonBox.RestoreDefaults
         )
         btns.accepted.connect(self.accept)
         btns.rejected.connect(self.reject)
         btns.button(QtWidgets.QDialogButtonBox.Apply).clicked.connect(self.apply)
+        btns.button(QtWidgets.QDialogButtonBox.RestoreDefaults).clicked.connect(
+            self.restore_defaults
+        )
 
         lay = QtWidgets.QVBoxLayout(self)
         lay.addLayout(form)
@@ -1675,12 +1685,51 @@ class PreferencesDialog(QtWidgets.QDialog):
         )
         self.processes_tab.set_update_ms(proc_ms)
         parent = self.parent()
+        if parent is not None and hasattr(parent, "save_preferences"):
+            parent.save_preferences(
+                {
+                    "history_seconds": history,
+                    "plot_update_ms": plot_ms,
+                    "text_update_ms": text_ms,
+                    "proc_update_ms": proc_ms,
+                    "ema_alpha": ema,
+                    "mem_ema_alpha": mem_ema,
+                    "show_cpu_freq": show_freq,
+                    "thread_line_width": width,
+                    "show_grid_x": grid_x,
+                    "show_grid_y": grid_y,
+                    "grid_divs": grid_divs,
+                    "smooth_graphs": smooth,
+                    "extra_smoothing": extra,
+                    "antialias": antialias,
+                }
+            )
         if parent is not None and hasattr(parent, "apply_theme"):
             parent.apply_theme(theme_name)
 
     def accept(self):
         self.apply()
         super().accept()
+
+    def restore_defaults(self):
+        self.in_history.setValue(ResourcesTab.HISTORY_SECONDS)
+        self.in_plot.setValue(ResourcesTab.PLOT_UPDATE_MS)
+        self.in_text.setValue(ResourcesTab.TEXT_UPDATE_MS)
+        self.in_proc.setValue(ProcessesTab.UPDATE_MS)
+        self.in_ema.setValue(ResourcesTab.EMA_ALPHA)
+        self.in_mem_ema.setValue(ResourcesTab.MEM_EMA_ALPHA)
+        if self.in_show_freq is not None:
+            self.in_show_freq.setChecked(ResourcesTab.SHOW_CPU_FREQ)
+        self.in_width.setValue(ResourcesTab.THREAD_LINE_WIDTH)
+        self.in_grid_x.setChecked(ResourcesTab.SHOW_GRID_X)
+        self.in_grid_y.setChecked(ResourcesTab.SHOW_GRID_Y)
+        self.in_grid_divs.setValue(ResourcesTab.GRID_DIVS)
+        self.in_smooth.setChecked(ResourcesTab.SMOOTH_GRAPHS)
+        self.in_extra.setChecked(ResourcesTab.EXTRA_SMOOTHING)
+        self.in_extra.setEnabled(ResourcesTab.SMOOTH_GRAPHS)
+        self.in_antialias.setChecked(ResourcesTab.ANTIALIAS)
+        self.in_theme.setCurrentText(DEFAULT_THEME)
+        self.apply()
 
 
 # ------------------------------- Main window -------------------------------
@@ -1722,17 +1771,19 @@ class MainWindow(QtWidgets.QMainWindow):
             self.pref_dir.mkdir(parents=True, exist_ok=True)
         except Exception:
             pass
+        self.settings_file = self.pref_dir / "settings.json"
         self.theme_file = self.pref_dir / "theme.txt"
         self.themes = build_theme_dict()
         self.current_theme = None
 
-        default_theme = "Deep Dark"
+        default_theme = DEFAULT_THEME
         if self.theme_file.exists():
             try:
                 default_theme = self.theme_file.read_text().strip() or default_theme
             except Exception:
                 pass
         self.apply_theme(default_theme)
+        self._load_preferences()
 
     def open_preferences(self):
         dlg = PreferencesDialog(
@@ -1757,6 +1808,38 @@ class MainWindow(QtWidgets.QMainWindow):
         self.current_theme = name
         try:
             self.theme_file.write_text(name)
+        except Exception:
+            pass
+
+    # --------- persistence helpers ---------
+    def _load_preferences(self):
+        if self.settings_file.exists():
+            try:
+                data = json.loads(self.settings_file.read_text())
+            except Exception:
+                return
+            self.resources_tab.apply_settings(
+                data.get("history_seconds", self.resources_tab.HISTORY_SECONDS),
+                data.get("plot_update_ms", self.resources_tab.PLOT_UPDATE_MS),
+                data.get("text_update_ms", self.resources_tab.TEXT_UPDATE_MS),
+                data.get("ema_alpha", self.resources_tab.EMA_ALPHA),
+                data.get("mem_ema_alpha", self.resources_tab.MEM_EMA_ALPHA),
+                data.get("show_cpu_freq", self.resources_tab.SHOW_CPU_FREQ),
+                data.get("thread_line_width", self.resources_tab.THREAD_LINE_WIDTH),
+                data.get("show_grid_x", self.resources_tab.SHOW_GRID_X),
+                data.get("show_grid_y", self.resources_tab.SHOW_GRID_Y),
+                data.get("grid_divs", self.resources_tab.GRID_DIVS),
+                data.get("smooth_graphs", self.resources_tab.SMOOTH_GRAPHS),
+                data.get("extra_smoothing", self.resources_tab.EXTRA_SMOOTHING),
+                data.get("antialias", self.resources_tab.ANTIALIAS),
+            )
+            self.processes_tab.set_update_ms(
+                data.get("proc_update_ms", self.processes_tab.UPDATE_MS)
+            )
+
+    def save_preferences(self, data: Dict[str, object]):
+        try:
+            self.settings_file.write_text(json.dumps(data, indent=2))
         except Exception:
             pass
 
