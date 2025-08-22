@@ -21,6 +21,7 @@ import time
 import math
 from collections import deque
 from typing import Dict, Tuple, List, Optional
+from pathlib import Path
 
 import psutil
 import platform
@@ -58,39 +59,263 @@ def human_freq(mhz: Optional[float]) -> str:
     return f"{mhz/1000.0:.2f} GHz" if mhz >= 1000.0 else f"{mhz:.0f} MHz"
 
 
-def set_dark_palette(app: QtWidgets.QApplication):
-    """Apply a dark Fusion palette + small style tweaks."""
-    app.setStyle("Fusion")
-    palette = QtGui.QPalette()
-    bg = QtGui.QColor(30, 30, 30)
-    base = QtGui.QColor(40, 40, 40)
-    text = QtGui.QColor(220, 220, 220)
-    accent = QtGui.QColor(53, 132, 228)
+def build_theme_dict() -> Dict[str, QtGui.QPalette]:
+    """Return dictionary mapping theme names to QPalettes."""
+    themes: Dict[str, QtGui.QPalette] = {}
 
-    palette.setColor(QtGui.QPalette.Window, bg)
-    palette.setColor(QtGui.QPalette.WindowText, text)
-    palette.setColor(QtGui.QPalette.Base, base)
-    palette.setColor(QtGui.QPalette.AlternateBase, QtGui.QColor(50, 50, 50))
-    palette.setColor(QtGui.QPalette.ToolTipBase, QtGui.QColor(255, 255, 220))
-    palette.setColor(QtGui.QPalette.ToolTipText, QtGui.QColor(0, 0, 0))
-    palette.setColor(QtGui.QPalette.Text, text)
-    palette.setColor(QtGui.QPalette.Button, QtGui.QColor(45, 45, 45))
-    palette.setColor(QtGui.QPalette.ButtonText, text)
-    palette.setColor(QtGui.QPalette.Highlight, accent)
-    palette.setColor(QtGui.QPalette.HighlightedText, QtGui.QColor(255, 255, 255))
-    app.setPalette(palette)
+    deep = QtGui.QPalette()
+    deep.setColor(QtGui.QPalette.Window, QtGui.QColor(30, 30, 30))
+    deep.setColor(QtGui.QPalette.WindowText, QtGui.QColor(220, 220, 220))
+    deep.setColor(QtGui.QPalette.Base, QtGui.QColor(40, 40, 40))
+    deep.setColor(QtGui.QPalette.AlternateBase, QtGui.QColor(50, 50, 50))
+    deep.setColor(QtGui.QPalette.ToolTipBase, QtGui.QColor(255, 255, 220))
+    deep.setColor(QtGui.QPalette.ToolTipText, QtGui.QColor(0, 0, 0))
+    deep.setColor(QtGui.QPalette.Text, QtGui.QColor(220, 220, 220))
+    deep.setColor(QtGui.QPalette.Button, QtGui.QColor(45, 45, 45))
+    deep.setColor(QtGui.QPalette.ButtonText, QtGui.QColor(220, 220, 220))
+    deep.setColor(QtGui.QPalette.Highlight, QtGui.QColor(53, 132, 228))
+    deep.setColor(QtGui.QPalette.HighlightedText, QtGui.QColor(255, 255, 255))
+    themes["Deep Dark"] = deep
 
-    app.setStyleSheet("""
-        QTableWidget { gridline-color: #555; }
-        QHeaderView::section { background:#2a2a2a; color:#ddd; padding: 4px; border: 0px; }
-        QTableWidget::item { selection-background-color:#35507a; selection-color:#fff; }
-        QLabel { color:#ddd; }
-        QTabWidget::pane { border: 1px solid #444; }
-        QTabBar::tab { background: #2a2a2a; color:#ddd; padding:6px 12px; }
-        QTabBar::tab:selected { background:#353535; }
-        QProgressBar { color: #ddd; border: 0px; background: #333; }
-        QProgressBar::chunk { background-color: #2d7ff7; }
-    """)
+    dark_purple = QtGui.QPalette()
+    dark_purple.setColor(QtGui.QPalette.Window, QtGui.QColor(53, 53, 53))
+    dark_purple.setColor(QtGui.QPalette.WindowText, QtCore.Qt.white)
+    dark_purple.setColor(QtGui.QPalette.Base, QtGui.QColor(35, 35, 35))
+    dark_purple.setColor(QtGui.QPalette.AlternateBase, QtGui.QColor(53, 53, 53))
+    dark_purple.setColor(QtGui.QPalette.ToolTipBase, QtGui.QColor(65, 65, 65))
+    dark_purple.setColor(QtGui.QPalette.ToolTipText, QtCore.Qt.white)
+    dark_purple.setColor(QtGui.QPalette.Text, QtCore.Qt.white)
+    dark_purple.setColor(QtGui.QPalette.Button, QtGui.QColor(53, 53, 53))
+    dark_purple.setColor(QtGui.QPalette.ButtonText, QtCore.Qt.white)
+    dark_purple.setColor(QtGui.QPalette.Highlight, QtGui.QColor(142, 45, 197))
+    dark_purple.setColor(QtGui.QPalette.HighlightedText, QtCore.Qt.black)
+    themes["Dark-purple"] = dark_purple
+
+    dark_blue = QtGui.QPalette()
+    dark_blue.setColor(QtGui.QPalette.Window, QtGui.QColor(53, 53, 53))
+    dark_blue.setColor(QtGui.QPalette.WindowText, QtCore.Qt.white)
+    dark_blue.setColor(QtGui.QPalette.Base, QtGui.QColor(35, 35, 35))
+    dark_blue.setColor(QtGui.QPalette.AlternateBase, QtGui.QColor(53, 53, 53))
+    dark_blue.setColor(QtGui.QPalette.ToolTipBase, QtGui.QColor(65, 65, 65))
+    dark_blue.setColor(QtGui.QPalette.ToolTipText, QtCore.Qt.white)
+    dark_blue.setColor(QtGui.QPalette.Text, QtCore.Qt.white)
+    dark_blue.setColor(QtGui.QPalette.Button, QtGui.QColor(53, 53, 53))
+    dark_blue.setColor(QtGui.QPalette.ButtonText, QtCore.Qt.white)
+    dark_blue.setColor(QtGui.QPalette.Highlight, QtGui.QColor(65, 105, 225))
+    dark_blue.setColor(QtGui.QPalette.HighlightedText, QtCore.Qt.black)
+    themes["Dark-blue"] = dark_blue
+
+    dark_gold = QtGui.QPalette()
+    dark_gold.setColor(QtGui.QPalette.Window, QtGui.QColor(53, 53, 53))
+    dark_gold.setColor(QtGui.QPalette.WindowText, QtCore.Qt.white)
+    dark_gold.setColor(QtGui.QPalette.Base, QtGui.QColor(35, 35, 35))
+    dark_gold.setColor(QtGui.QPalette.AlternateBase, QtGui.QColor(53, 53, 53))
+    dark_gold.setColor(QtGui.QPalette.ToolTipBase, QtGui.QColor(65, 65, 65))
+    dark_gold.setColor(QtGui.QPalette.ToolTipText, QtCore.Qt.white)
+    dark_gold.setColor(QtGui.QPalette.Text, QtCore.Qt.white)
+    dark_gold.setColor(QtGui.QPalette.Button, QtGui.QColor(53, 53, 53))
+    dark_gold.setColor(QtGui.QPalette.ButtonText, QtCore.Qt.white)
+    dark_gold.setColor(QtGui.QPalette.Highlight, QtGui.QColor(255, 215, 0))
+    dark_gold.setColor(QtGui.QPalette.HighlightedText, QtCore.Qt.black)
+    themes["Dark-gold"] = dark_gold
+
+    light = QtGui.QPalette()
+    light.setColor(QtGui.QPalette.Window, QtCore.Qt.white)
+    light.setColor(QtGui.QPalette.WindowText, QtCore.Qt.black)
+    light.setColor(QtGui.QPalette.Base, QtCore.Qt.white)
+    light.setColor(QtGui.QPalette.AlternateBase, QtGui.QColor(240, 240, 240))
+    light.setColor(QtGui.QPalette.ToolTipBase, QtCore.Qt.white)
+    light.setColor(QtGui.QPalette.ToolTipText, QtCore.Qt.black)
+    light.setColor(QtGui.QPalette.Text, QtCore.Qt.black)
+    light.setColor(QtGui.QPalette.Button, QtGui.QColor(240, 240, 240))
+    light.setColor(QtGui.QPalette.ButtonText, QtCore.Qt.black)
+    light.setColor(QtGui.QPalette.Highlight, QtGui.QColor(53, 132, 228))
+    light.setColor(QtGui.QPalette.HighlightedText, QtCore.Qt.white)
+    themes["Light"] = light
+
+    beige = QtGui.QPalette()
+    beige.setColor(QtGui.QPalette.Window, QtGui.QColor(239, 235, 222))
+    beige.setColor(QtGui.QPalette.WindowText, QtGui.QColor(62, 50, 39))
+    beige.setColor(QtGui.QPalette.Base, QtGui.QColor(252, 252, 252))
+    beige.setColor(QtGui.QPalette.AlternateBase, QtGui.QColor(239, 235, 222))
+    beige.setColor(QtGui.QPalette.ToolTipBase, QtGui.QColor(239, 235, 222))
+    beige.setColor(QtGui.QPalette.ToolTipText, QtGui.QColor(62, 50, 39))
+    beige.setColor(QtGui.QPalette.Text, QtGui.QColor(62, 50, 39))
+    beige.setColor(QtGui.QPalette.Button, QtGui.QColor(220, 210, 197))
+    beige.setColor(QtGui.QPalette.ButtonText, QtGui.QColor(62, 50, 39))
+    beige.setColor(QtGui.QPalette.Highlight, QtGui.QColor(193, 154, 107))
+    beige.setColor(QtGui.QPalette.HighlightedText, QtCore.Qt.white)
+    themes["Beige"] = beige
+
+    ocean = QtGui.QPalette()
+    ocean.setColor(QtGui.QPalette.Window, QtGui.QColor(38, 50, 56))
+    ocean.setColor(QtGui.QPalette.WindowText, QtCore.Qt.white)
+    ocean.setColor(QtGui.QPalette.Base, QtGui.QColor(69, 90, 100))
+    ocean.setColor(QtGui.QPalette.AlternateBase, QtGui.QColor(55, 71, 79))
+    ocean.setColor(QtGui.QPalette.ToolTipBase, QtGui.QColor(38, 50, 56))
+    ocean.setColor(QtGui.QPalette.ToolTipText, QtCore.Qt.white)
+    ocean.setColor(QtGui.QPalette.Text, QtCore.Qt.white)
+    ocean.setColor(QtGui.QPalette.Button, QtGui.QColor(55, 71, 79))
+    ocean.setColor(QtGui.QPalette.ButtonText, QtCore.Qt.white)
+    ocean.setColor(QtGui.QPalette.Highlight, QtGui.QColor(0, 137, 123))
+    ocean.setColor(QtGui.QPalette.HighlightedText, QtCore.Qt.black)
+    themes["Ocean"] = ocean
+
+    hc = QtGui.QPalette()
+    hc.setColor(QtGui.QPalette.Window, QtGui.QColor(0, 0, 0))
+    hc.setColor(QtGui.QPalette.WindowText, QtCore.Qt.white)
+    hc.setColor(QtGui.QPalette.Base, QtGui.QColor(0, 0, 0))
+    hc.setColor(QtGui.QPalette.AlternateBase, QtGui.QColor(55, 55, 55))
+    hc.setColor(QtGui.QPalette.ToolTipBase, QtGui.QColor(0, 0, 0))
+    hc.setColor(QtGui.QPalette.ToolTipText, QtCore.Qt.white)
+    hc.setColor(QtGui.QPalette.Text, QtCore.Qt.white)
+    hc.setColor(QtGui.QPalette.Button, QtGui.QColor(0, 0, 0))
+    hc.setColor(QtGui.QPalette.ButtonText, QtCore.Qt.white)
+    hc.setColor(QtGui.QPalette.Highlight, QtGui.QColor(255, 0, 0))
+    hc.setColor(QtGui.QPalette.HighlightedText, QtCore.Qt.white)
+    themes["Contrast"] = hc
+
+    hc_w = QtGui.QPalette()
+    hc_w.setColor(QtGui.QPalette.Window, QtCore.Qt.white)
+    hc_w.setColor(QtGui.QPalette.WindowText, QtCore.Qt.black)
+    hc_w.setColor(QtGui.QPalette.Base, QtCore.Qt.white)
+    hc_w.setColor(QtGui.QPalette.AlternateBase, QtGui.QColor(200, 200, 200))
+    hc_w.setColor(QtGui.QPalette.ToolTipBase, QtCore.Qt.white)
+    hc_w.setColor(QtGui.QPalette.ToolTipText, QtCore.Qt.black)
+    hc_w.setColor(QtGui.QPalette.Text, QtCore.Qt.black)
+    hc_w.setColor(QtGui.QPalette.Button, QtCore.Qt.white)
+    hc_w.setColor(QtGui.QPalette.ButtonText, QtCore.Qt.black)
+    hc_w.setColor(QtGui.QPalette.Highlight, QtCore.Qt.black)
+    hc_w.setColor(QtGui.QPalette.HighlightedText, QtCore.Qt.white)
+    themes["Contrast White"] = hc_w
+
+    solar = QtGui.QPalette()
+    solar.setColor(QtGui.QPalette.Window, QtGui.QColor(0, 43, 54))
+    solar.setColor(QtGui.QPalette.WindowText, QtGui.QColor(253, 246, 227))
+    solar.setColor(QtGui.QPalette.Base, QtGui.QColor(7, 54, 66))
+    solar.setColor(QtGui.QPalette.AlternateBase, QtGui.QColor(0, 43, 54))
+    solar.setColor(QtGui.QPalette.ToolTipBase, QtGui.QColor(7, 54, 66))
+    solar.setColor(QtGui.QPalette.ToolTipText, QtGui.QColor(253, 246, 227))
+    solar.setColor(QtGui.QPalette.Text, QtGui.QColor(253, 246, 227))
+    solar.setColor(QtGui.QPalette.Button, QtGui.QColor(7, 54, 66))
+    solar.setColor(QtGui.QPalette.ButtonText, QtGui.QColor(253, 246, 227))
+    solar.setColor(QtGui.QPalette.Highlight, QtGui.QColor(38, 139, 210))
+    solar.setColor(QtGui.QPalette.HighlightedText, QtCore.Qt.black)
+    themes["Solar"] = solar
+
+    cyber = QtGui.QPalette()
+    cyber.setColor(QtGui.QPalette.Window, QtGui.QColor(10, 10, 20))
+    cyber.setColor(QtGui.QPalette.WindowText, QtGui.QColor(0, 255, 255))
+    cyber.setColor(QtGui.QPalette.Base, QtGui.QColor(30, 30, 45))
+    cyber.setColor(QtGui.QPalette.AlternateBase, QtGui.QColor(25, 25, 35))
+    cyber.setColor(QtGui.QPalette.ToolTipBase, QtGui.QColor(45, 45, 65))
+    cyber.setColor(QtGui.QPalette.ToolTipText, QtGui.QColor(255, 0, 255))
+    cyber.setColor(QtGui.QPalette.Text, QtGui.QColor(0, 255, 255))
+    cyber.setColor(QtGui.QPalette.Button, QtGui.QColor(40, 40, 55))
+    cyber.setColor(QtGui.QPalette.ButtonText, QtGui.QColor(255, 0, 255))
+    cyber.setColor(QtGui.QPalette.Highlight, QtGui.QColor(255, 0, 128))
+    cyber.setColor(QtGui.QPalette.HighlightedText, QtCore.Qt.white)
+    themes["Cyber"] = cyber
+
+    drac = QtGui.QPalette()
+    drac.setColor(QtGui.QPalette.Window, QtGui.QColor("#282a36"))
+    drac.setColor(QtGui.QPalette.WindowText, QtGui.QColor("#f8f8f2"))
+    drac.setColor(QtGui.QPalette.Base, QtGui.QColor("#1e1f29"))
+    drac.setColor(QtGui.QPalette.AlternateBase, QtGui.QColor("#282a36"))
+    drac.setColor(QtGui.QPalette.ToolTipBase, QtGui.QColor("#44475a"))
+    drac.setColor(QtGui.QPalette.ToolTipText, QtGui.QColor("#f8f8f2"))
+    drac.setColor(QtGui.QPalette.Text, QtGui.QColor("#f8f8f2"))
+    drac.setColor(QtGui.QPalette.Button, QtGui.QColor("#44475a"))
+    drac.setColor(QtGui.QPalette.ButtonText, QtGui.QColor("#f8f8f2"))
+    drac.setColor(QtGui.QPalette.Highlight, QtGui.QColor("#bd93f9"))
+    drac.setColor(QtGui.QPalette.HighlightedText, QtCore.Qt.black)
+    themes["Dracula"] = drac
+
+    nord = QtGui.QPalette()
+    nord.setColor(QtGui.QPalette.Window, QtGui.QColor("#2e3440"))
+    nord.setColor(QtGui.QPalette.WindowText, QtGui.QColor("#d8dee9"))
+    nord.setColor(QtGui.QPalette.Base, QtGui.QColor("#3b4252"))
+    nord.setColor(QtGui.QPalette.AlternateBase, QtGui.QColor("#434c5e"))
+    nord.setColor(QtGui.QPalette.ToolTipBase, QtGui.QColor("#4c566a"))
+    nord.setColor(QtGui.QPalette.ToolTipText, QtGui.QColor("#eceff4"))
+    nord.setColor(QtGui.QPalette.Text, QtGui.QColor("#e5e9f0"))
+    nord.setColor(QtGui.QPalette.Button, QtGui.QColor("#4c566a"))
+    nord.setColor(QtGui.QPalette.ButtonText, QtGui.QColor("#d8dee9"))
+    nord.setColor(QtGui.QPalette.Highlight, QtGui.QColor("#88c0d0"))
+    nord.setColor(QtGui.QPalette.HighlightedText, QtCore.Qt.black)
+    themes["Nord"] = nord
+
+    gruv = QtGui.QPalette()
+    gruv.setColor(QtGui.QPalette.Window, QtGui.QColor("#282828"))
+    gruv.setColor(QtGui.QPalette.WindowText, QtGui.QColor("#ebdbb2"))
+    gruv.setColor(QtGui.QPalette.Base, QtGui.QColor("#32302f"))
+    gruv.setColor(QtGui.QPalette.AlternateBase, QtGui.QColor("#3c3836"))
+    gruv.setColor(QtGui.QPalette.ToolTipBase, QtGui.QColor("#504945"))
+    gruv.setColor(QtGui.QPalette.ToolTipText, QtGui.QColor("#fbf1c7"))
+    gruv.setColor(QtGui.QPalette.Text, QtGui.QColor("#ebdbb2"))
+    gruv.setColor(QtGui.QPalette.Button, QtGui.QColor("#504945"))
+    gruv.setColor(QtGui.QPalette.ButtonText, QtGui.QColor("#ebdbb2"))
+    gruv.setColor(QtGui.QPalette.Highlight, QtGui.QColor("#d79921"))
+    gruv.setColor(QtGui.QPalette.HighlightedText, QtCore.Qt.black)
+    themes["Gruvbox"] = gruv
+
+    mono = QtGui.QPalette()
+    mono.setColor(QtGui.QPalette.Window, QtGui.QColor("#272822"))
+    mono.setColor(QtGui.QPalette.WindowText, QtGui.QColor("#f8f8f2"))
+    mono.setColor(QtGui.QPalette.Base, QtGui.QColor("#1e1f1c"))
+    mono.setColor(QtGui.QPalette.AlternateBase, QtGui.QColor("#272822"))
+    mono.setColor(QtGui.QPalette.ToolTipBase, QtGui.QColor("#3e3d32"))
+    mono.setColor(QtGui.QPalette.ToolTipText, QtGui.QColor("#f8f8f2"))
+    mono.setColor(QtGui.QPalette.Text, QtGui.QColor("#f8f8f2"))
+    mono.setColor(QtGui.QPalette.Button, QtGui.QColor("#3e3d32"))
+    mono.setColor(QtGui.QPalette.ButtonText, QtGui.QColor("#f8f8f2"))
+    mono.setColor(QtGui.QPalette.Highlight, QtGui.QColor("#a6e22e"))
+    mono.setColor(QtGui.QPalette.HighlightedText, QtCore.Qt.black)
+    themes["Monokai"] = mono
+
+    tokyo = QtGui.QPalette()
+    tokyo.setColor(QtGui.QPalette.Window, QtGui.QColor("#1a1b26"))
+    tokyo.setColor(QtGui.QPalette.WindowText, QtGui.QColor("#c0caf5"))
+    tokyo.setColor(QtGui.QPalette.Base, QtGui.QColor("#1f2335"))
+    tokyo.setColor(QtGui.QPalette.AlternateBase, QtGui.QColor("#24283b"))
+    tokyo.setColor(QtGui.QPalette.ToolTipBase, QtGui.QColor("#414868"))
+    tokyo.setColor(QtGui.QPalette.ToolTipText, QtGui.QColor("#c0caf5"))
+    tokyo.setColor(QtGui.QPalette.Text, QtGui.QColor("#c0caf5"))
+    tokyo.setColor(QtGui.QPalette.Button, QtGui.QColor("#414868"))
+    tokyo.setColor(QtGui.QPalette.ButtonText, QtGui.QColor("#c0caf5"))
+    tokyo.setColor(QtGui.QPalette.Highlight, QtGui.QColor("#7aa2f7"))
+    tokyo.setColor(QtGui.QPalette.HighlightedText, QtCore.Qt.white)
+    themes["Tokyo"] = tokyo
+
+    mocha = QtGui.QPalette()
+    mocha.setColor(QtGui.QPalette.Window, QtGui.QColor("#1e1e2e"))
+    mocha.setColor(QtGui.QPalette.WindowText, QtGui.QColor("#cdd6f4"))
+    mocha.setColor(QtGui.QPalette.Base, QtGui.QColor("#181825"))
+    mocha.setColor(QtGui.QPalette.AlternateBase, QtGui.QColor("#1e1e2e"))
+    mocha.setColor(QtGui.QPalette.ToolTipBase, QtGui.QColor("#313244"))
+    mocha.setColor(QtGui.QPalette.ToolTipText, QtGui.QColor("#cdd6f4"))
+    mocha.setColor(QtGui.QPalette.Text, QtGui.QColor("#cdd6f4"))
+    mocha.setColor(QtGui.QPalette.Button, QtGui.QColor("#313244"))
+    mocha.setColor(QtGui.QPalette.ButtonText, QtGui.QColor("#cdd6f4"))
+    mocha.setColor(QtGui.QPalette.Highlight, QtGui.QColor("#f38ba8"))
+    mocha.setColor(QtGui.QPalette.HighlightedText, QtCore.Qt.black)
+    themes["Mocha"] = mocha
+
+    pale = QtGui.QPalette()
+    pale.setColor(QtGui.QPalette.Window, QtGui.QColor("#292d3e"))
+    pale.setColor(QtGui.QPalette.WindowText, QtGui.QColor("#a6accd"))
+    pale.setColor(QtGui.QPalette.Base, QtGui.QColor("#1b1d2b"))
+    pale.setColor(QtGui.QPalette.AlternateBase, QtGui.QColor("#222436"))
+    pale.setColor(QtGui.QPalette.ToolTipBase, QtGui.QColor("#444267"))
+    pale.setColor(QtGui.QPalette.ToolTipText, QtGui.QColor("#a6accd"))
+    pale.setColor(QtGui.QPalette.Text, QtGui.QColor("#a6accd"))
+    pale.setColor(QtGui.QPalette.Button, QtGui.QColor("#444267"))
+    pale.setColor(QtGui.QPalette.ButtonText, QtGui.QColor("#a6accd"))
+    pale.setColor(QtGui.QPalette.Highlight, QtGui.QColor("#82aaff"))
+    pale.setColor(QtGui.QPalette.HighlightedText, QtCore.Qt.black)
+    themes["Palenight"] = pale
+
+    return themes
 
 
 # ------------------------------- Centered tabs -------------------------------
@@ -226,10 +451,8 @@ class LegendGrid(QtWidgets.QWidget):
             self.swatches.append(swatch)
 
             name = QtWidgets.QLabel(text)
-            name.setStyleSheet("color:white;")
 
             val = QtWidgets.QLabel("0.0% · —")
-            val.setStyleSheet("color:#bbbbbb;")
             self.value_labels.append(val)
 
             roww = QtWidgets.QWidget()
@@ -404,7 +627,7 @@ class ResourcesTab(QtWidgets.QWidget):
 
         # Average frequency label (visible only when SHOW_CPU_FREQ is True)
         self.cpu_freq_avg_label = QtWidgets.QLabel("Average frequency: —")
-        self.cpu_freq_avg_label.setStyleSheet("color:#bbbbbb; margin-left:2px;")
+        self.cpu_freq_avg_label.setStyleSheet("margin-left:2px;")
 
         # ----- Memory / Swap (left % axis) -----
         self.mem_axis_bottom = TimeAxisItem(history_len, self.PLOT_UPDATE_MS / 1000.0)
@@ -441,7 +664,6 @@ class ResourcesTab(QtWidgets.QWidget):
         self.mem_plot.addItem(self.swap_fill)
 
         self.mem_label = QtWidgets.QLabel("Memory —")
-        self.mem_label.setStyleSheet("color:white;")
 
         # ----- Network (left numeric axis) -----
         self.net_axis_bottom = TimeAxisItem(history_len, self.PLOT_UPDATE_MS / 1000.0)
@@ -464,7 +686,6 @@ class ResourcesTab(QtWidgets.QWidget):
         self.net_ema_tx = 0.0
         self.net_label = QtWidgets.QLabel("<span style='color:#64b4ff'>Receiving —</span>  <span style='color:#ff7864'>Sending —</span>")
         self.net_label.setTextFormat(QtCore.Qt.RichText)
-        self.net_label.setStyleSheet("color:white;")
 
         # Text placeholders updated by the text timer
         self._mem_label_text = "Memory —"
@@ -472,7 +693,7 @@ class ResourcesTab(QtWidgets.QWidget):
 
         # ----- Assemble layout -----
         self.cpu_total_label = QtWidgets.QLabel("Total CPU Usage: —")
-        self.cpu_total_label.setStyleSheet("color:#bbbbbb; margin-left:2px;")
+        self.cpu_total_label.setStyleSheet("margin-left:2px;")
 
         self.cpu_section = CollapsibleSection("CPU")
         self.cpu_section.add_widget(self.cpu_plot)
@@ -790,6 +1011,17 @@ class ResourcesTab(QtWidgets.QWidget):
 
         # Frequencies visibility
         self._apply_freq_visibility()
+        
+    def apply_theme(self, palette: QtGui.QPalette):
+        """Update plot colors to match the given palette."""
+        bg = palette.color(QtGui.QPalette.Window)
+        fg = palette.color(QtGui.QPalette.WindowText)
+        for plot in (self.cpu_plot, self.mem_plot, self.net_plot):
+            plot.setBackground(bg)
+            for name in ("left", "bottom"):
+                ax = plot.getPlotItem().getAxis(name)
+                ax.setPen(fg)
+                ax.setTextPen(fg)
 
     # ---------- TEXT TIMER (legend & labels) ----------
     def _update_text(self):
@@ -1431,11 +1663,28 @@ class MainWindow(QtWidgets.QMainWindow):
         v.addWidget(self.tabs)
         self.setCentralWidget(container)
 
-        # Toolbar with Preferences (right aligned)
+        # Preferences directory and theme support
+        self.pref_dir = Path.home() / ".klv_system_monitor"
+        self.pref_dir.mkdir(parents=True, exist_ok=True)
+        self.theme_file = self.pref_dir / "theme.txt"
+        self.themes = build_theme_dict()
+        self.current_theme = None
+
+        # Toolbar with Theme menu and Preferences (right aligned)
         tb = QtWidgets.QToolBar()
         tb.setMovable(False)
         tb.setIconSize(QtCore.QSize(18, 18))
         self.addToolBar(QtCore.Qt.TopToolBarArea, tb)
+
+        self.theme_btn = QtWidgets.QToolButton()
+        self.theme_btn.setText("Theme")
+        theme_menu = QtWidgets.QMenu(self)
+        for name in self.themes.keys():
+            act = theme_menu.addAction(name)
+            act.triggered.connect(lambda _=False, n=name: self.apply_theme(n))
+        self.theme_btn.setMenu(theme_menu)
+        self.theme_btn.setPopupMode(QtWidgets.QToolButton.InstantPopup)
+        tb.addWidget(self.theme_btn)
 
         pref_act = QtWidgets.QAction("Preferences", self)
         pref_act.triggered.connect(self.open_preferences)
@@ -1444,14 +1693,36 @@ class MainWindow(QtWidgets.QMainWindow):
         spacer.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Preferred)
         tb.addWidget(spacer)
 
+        default_theme = "Deep Dark"
+        if self.theme_file.exists():
+            try:
+                default_theme = self.theme_file.read_text().strip() or default_theme
+            except Exception:
+                pass
+        self.apply_theme(default_theme)
+
     def open_preferences(self):
         dlg = PreferencesDialog(self.resources_tab, self.processes_tab, self)
         dlg.exec_()
 
+    def apply_theme(self, name: str):
+        app = QtWidgets.QApplication.instance()
+        palette = self.themes[name]
+        app.setStyle("Fusion")
+        app.setPalette(palette)
+        app.setStyleSheet("")
+        pg.setConfigOption('background', palette.color(QtGui.QPalette.Window))
+        pg.setConfigOption('foreground', palette.color(QtGui.QPalette.WindowText))
+        self.resources_tab.apply_theme(palette)
+        self.current_theme = name
+        try:
+            self.theme_file.write_text(name)
+        except Exception:
+            pass
+
 
 def main():
     app = QtWidgets.QApplication(sys.argv)
-    set_dark_palette(app)
     w = MainWindow()
     w.show()
     sys.exit(app.exec_())
