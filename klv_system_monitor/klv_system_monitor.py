@@ -424,14 +424,38 @@ class ClickableLabel(QtWidgets.QLabel):
 # ------------------------------- Legend (per-CPU usage + freq + color picker) -------------------------------
 
 class LegendGrid(QtWidgets.QWidget):
-    """
-    Compact multi-column legend with:
-      • swatch (click to pick a color),
-      • "CPU<i>",
-      • dynamic label "<usage>% · <freq>" for each logical CPU (thread).
-    Max 4 columns; grows downward; meant to live inside a QScrollArea.
-    """
-    def __init__(self, labels: List[str], colors: List[QtGui.QColor], on_color_change, columns=4, parent=None):
+    """Legend widget used to show a colored label for each CPU thread."""
+
+    def __init__(
+        self,
+        labels: List[str],
+        colors: List[QtGui.QColor],
+        on_color_change,
+        columns: int = 4,
+        show_values: bool = False,
+        parent=None,
+    ) -> None:
+        """Create a grid of legend items.
+
+        Parameters
+        ----------
+        labels: List[str]
+            Text labels for each entry (e.g. ``CPU1``).
+        colors: List[QtGui.QColor]
+            Initial colors for the swatches.
+        on_color_change: Callable
+            Callback invoked when the user picks a new color.
+        columns: int, optional
+            Number of columns in the grid (capped at 4).
+        show_values: bool, optional
+            If ``True`` a dynamic usage/frequency label is shown next to each
+            entry.  The default ``False`` matches the simplified legend style
+            from the first screenshot provided by the user, where only CPU names
+            are displayed.
+        parent: QWidget, optional
+            Parent widget.
+        """
+
         super().__init__(parent)
         self.value_labels: List[QtWidgets.QLabel] = []
         self.swatches: List[ClickableLabel] = []
@@ -455,16 +479,18 @@ class LegendGrid(QtWidgets.QWidget):
 
             name = QtWidgets.QLabel(text)
 
-            val = QtWidgets.QLabel("0.0% · —")
-            self.value_labels.append(val)
-
             roww = QtWidgets.QWidget()
             roww.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Fixed)
             rowl = QtWidgets.QHBoxLayout(roww)
             rowl.setContentsMargins(0, 0, 0, 0)
             rowl.addWidget(swatch)
             rowl.addWidget(name)
-            rowl.addWidget(val)
+
+            if show_values:
+                val = QtWidgets.QLabel("0.0% · —")
+                self.value_labels.append(val)
+                rowl.addWidget(val)
+
             rowl.addStretch(1)
             self.grid.addWidget(roww, r, c)
             self.grid.setColumnStretch(c, 1)
@@ -479,10 +505,14 @@ class LegendGrid(QtWidgets.QWidget):
 
     def resizeEvent(self, event: QtGui.QResizeEvent):
         super().resizeEvent(event)
-        rows = math.ceil(len(self.value_labels) / self.columns) if self.columns else 0
+        total_items = len(self.swatches)
+        rows = math.ceil(total_items / self.columns) if self.columns else 0
         if rows > 1:
             avail = self.height() - self.grid.contentsMargins().top() - self.grid.contentsMargins().bottom()
-            item_h = self.value_labels[0].sizeHint().height() if self.value_labels else 0
+            if self.value_labels:
+                item_h = self.value_labels[0].sizeHint().height()
+            else:
+                item_h = self.swatches[0].sizeHint().height()
             spacing = max(2, (avail - rows * item_h) // (rows - 1))
         else:
             spacing = 0
