@@ -732,7 +732,7 @@ class ResourcesTab(QtWidgets.QWidget):
         self.cpu_section.add_widget(self.cpu_total_label)
         # Allow the legend area to grow/shrink with the window height
         self.cpu_section.content_layout.setStretch(0, 3)
-        self.cpu_section.content_layout.setStretch(1, 1)
+        self.cpu_section.content_layout.setStretch(1, 2)
         self.cpu_section.default_stretch = 2
 
         self.mem_section = CollapsibleSection("Memory and Swap")
