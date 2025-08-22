@@ -506,7 +506,8 @@ class CollapsibleSection(QtWidgets.QWidget):
     def __init__(self, title: str, parent=None):
         super().__init__(parent)
         self.toggle = QtWidgets.QToolButton(text=title, checkable=True, checked=True)
-        self.toggle.setStyleSheet("QToolButton { border: none; }")
+        # Style the toggle so that its text color follows the current palette
+        self._update_toggle_style()
         font = self.toggle.font()
         font.setBold(True)
         self.toggle.setFont(font)
@@ -531,6 +532,19 @@ class CollapsibleSection(QtWidgets.QWidget):
             QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Expanding
         )
         self.default_stretch = 1
+
+    def _update_toggle_style(self):
+        """Ensure the section title respects the palette's text color."""
+        fg = self.palette().color(QtGui.QPalette.WindowText).name()
+        self.toggle.setStyleSheet(
+            f"QToolButton {{ border: none; color: {fg}; }}"
+        )
+
+    def changeEvent(self, event: QtCore.QEvent):  # type: ignore[override]
+        if event.type() == QtCore.QEvent.PaletteChange:
+            # When the theme changes, update the toggle color
+            self._update_toggle_style()
+        super().changeEvent(event)
 
     def _on_toggle(self):
         visible = self.toggle.isChecked()
@@ -637,7 +651,9 @@ class ResourcesTab(QtWidgets.QWidget):
         self.cpu_legend_scroll.setWidget(self.cpu_legend_grid)
         self.cpu_legend_scroll.setWidgetResizable(True)
         self.cpu_legend_scroll.setFrameShape(QtWidgets.QFrame.NoFrame)
-        self.cpu_legend_scroll.setMaximumHeight(240)
+        self.cpu_legend_scroll.setSizePolicy(
+            QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Expanding
+        )
 
         # Average frequency label (visible only when SHOW_CPU_FREQ is True)
         self.cpu_freq_avg_label = QtWidgets.QLabel("Average frequency: —")
@@ -714,6 +730,9 @@ class ResourcesTab(QtWidgets.QWidget):
         self.cpu_section.add_widget(self.cpu_legend_scroll)
         self.cpu_section.add_widget(self.cpu_freq_avg_label)
         self.cpu_section.add_widget(self.cpu_total_label)
+        # Allow the legend area to grow/shrink with the window height
+        self.cpu_section.content_layout.setStretch(0, 3)
+        self.cpu_section.content_layout.setStretch(1, 1)
         self.cpu_section.default_stretch = 2
 
         self.mem_section = CollapsibleSection("Memory and Swap")
