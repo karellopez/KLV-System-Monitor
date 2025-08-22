@@ -30,6 +30,9 @@ import threading
 from PyQt5 import QtWidgets, QtCore, QtGui
 import pyqtgraph as pg
 
+# Directory used to store persistent user preferences
+PREF_DIR = Path(__file__).resolve().parent / "user_preferences"
+
 # Simple OS helpers
 IS_WINDOWS = platform.system() == "Windows"
 IS_LINUX = platform.system() == "Linux"
@@ -434,15 +437,15 @@ class LegendGrid(QtWidgets.QWidget):
         self.swatches: List[ClickableLabel] = []
         self.on_color_change = on_color_change
 
-        grid = QtWidgets.QGridLayout(self)
-        grid.setContentsMargins(0, 0, 0, 0)
-        grid.setHorizontalSpacing(10)
-        grid.setVerticalSpacing(2)
+        self.grid = QtWidgets.QGridLayout(self)
+        self.grid.setContentsMargins(0, 0, 0, 0)
+        self.grid.setHorizontalSpacing(10)
+        self.grid.setVerticalSpacing(2)
 
-        columns = max(1, min(4, int(columns)))  # hard cap at 4
+        self.columns = max(1, min(4, int(columns)))  # hard cap at 4
 
         for idx, (text, col) in enumerate(zip(labels, colors)):
-            r, c = divmod(idx, columns)
+            r, c = divmod(idx, self.columns)
 
             swatch = ClickableLabel()
             swatch.setFixedSize(12, 12)
@@ -463,8 +466,8 @@ class LegendGrid(QtWidgets.QWidget):
             rowl.addWidget(name)
             rowl.addWidget(val)
             rowl.addStretch(1)
-            grid.addWidget(roww, r, c)
-            grid.setColumnStretch(c, 1)
+            self.grid.addWidget(roww, r, c)
+            self.grid.setColumnStretch(c, 1)
 
     def _pick_color(self, i: int):
         """Open QColorDialog and notify the parent when a color is chosen."""
@@ -473,6 +476,17 @@ class LegendGrid(QtWidgets.QWidget):
             self.swatches[i].setStyleSheet(f"background:{col.name()}; border-radius:2px;")
             if callable(self.on_color_change):
                 self.on_color_change(i, col)
+
+    def resizeEvent(self, event: QtGui.QResizeEvent):
+        super().resizeEvent(event)
+        rows = math.ceil(len(self.value_labels) / self.columns) if self.columns else 0
+        if rows > 1:
+            avail = self.height() - self.grid.contentsMargins().top() - self.grid.contentsMargins().bottom()
+            item_h = self.value_labels[0].sizeHint().height() if self.value_labels else 0
+            spacing = max(2, (avail - rows * item_h) // (rows - 1))
+        else:
+            spacing = 0
+        self.grid.setVerticalSpacing(spacing)
 
     def set_values(self, usages: List[float], freqs_mhz: Optional[List[float]] = None):
         """Update the per-CPU legend values."""
@@ -1664,8 +1678,11 @@ class MainWindow(QtWidgets.QMainWindow):
         self.setCentralWidget(container)
 
         # Preferences directory and theme support
-        self.pref_dir = Path.home() / ".klv_system_monitor"
-        self.pref_dir.mkdir(parents=True, exist_ok=True)
+        self.pref_dir = PREF_DIR
+        try:
+            self.pref_dir.mkdir(parents=True, exist_ok=True)
+        except Exception:
+            pass
         self.theme_file = self.pref_dir / "theme.txt"
         self.themes = build_theme_dict()
         self.current_theme = None
@@ -1708,9 +1725,10 @@ class MainWindow(QtWidgets.QMainWindow):
     def apply_theme(self, name: str):
         app = QtWidgets.QApplication.instance()
         palette = self.themes[name]
-        app.setStyle("Fusion")
         app.setPalette(palette)
-        app.setStyleSheet("")
+        self.setPalette(palette)
+        for tab in (self.processes_tab, self.resources_tab, self.filesystems_tab):
+            tab.setPalette(palette)
         pg.setConfigOption('background', palette.color(QtGui.QPalette.Window))
         pg.setConfigOption('foreground', palette.color(QtGui.QPalette.WindowText))
         self.resources_tab.apply_theme(palette)
@@ -1723,6 +1741,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
 def main():
     app = QtWidgets.QApplication(sys.argv)
+    app.setStyle("Fusion")
     w = MainWindow()
     w.show()
     sys.exit(app.exec_())
