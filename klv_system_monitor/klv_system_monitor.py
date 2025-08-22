@@ -18,7 +18,6 @@
 
 import sys
 import time
-import math
 from collections import deque
 from typing import Dict, Tuple, List, Optional
 from pathlib import Path
@@ -476,17 +475,6 @@ class LegendGrid(QtWidgets.QWidget):
             self.swatches[i].setStyleSheet(f"background:{col.name()}; border-radius:2px;")
             if callable(self.on_color_change):
                 self.on_color_change(i, col)
-
-    def resizeEvent(self, event: QtGui.QResizeEvent):
-        super().resizeEvent(event)
-        rows = math.ceil(len(self.value_labels) / self.columns) if self.columns else 0
-        if rows > 1:
-            avail = self.height() - self.grid.contentsMargins().top() - self.grid.contentsMargins().bottom()
-            item_h = self.value_labels[0].sizeHint().height() if self.value_labels else 0
-            spacing = max(2, (avail - rows * item_h) // (rows - 1))
-        else:
-            spacing = 0
-        self.grid.setVerticalSpacing(spacing)
 
     def set_values(self, usages: List[float], freqs_mhz: Optional[List[float]] = None):
         """Update the per-CPU legend values."""
