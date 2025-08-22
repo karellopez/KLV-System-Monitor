@@ -447,7 +447,7 @@ class LegendGrid(QtWidgets.QWidget):
             r, c = divmod(idx, self.columns)
 
             swatch = ClickableLabel()
-            swatch.setFixedSize(12, 12)
+            swatch.setFixedSize(20, 12)
             swatch.setStyleSheet(f"background:{col.name()}; border-radius:2px;")
             swatch.clicked.connect(lambda i=idx: self._pick_color(i))
             self.swatches.append(swatch)
