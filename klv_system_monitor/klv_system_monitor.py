@@ -258,7 +258,7 @@ class LegendGrid(QtWidgets.QWidget):
             if freqs_mhz and i < len(freqs_mhz) and freqs_mhz[i] and freqs_mhz[i] > 0:
                 lab.setText(f"{pct:,.1f}% · {human_freq(freqs_mhz[i])}")
             else:
-                lab.setText(f"{pct:,.1f}% · —")
+                lab.setText(f"{pct:,.1f}% ")
 
 
 # ------------------------------- Collapsible section -------------------------------
