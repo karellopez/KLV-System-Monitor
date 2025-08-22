@@ -780,8 +780,7 @@ class ResourcesTab(QtWidgets.QWidget):
         super().showEvent(e)
 
     def hideEvent(self, e: QtGui.QHideEvent):
-        self.plot_timer.stop()
-        self.text_timer.stop()
+        # Keep timers running even when the tab is hidden so plots remain up-to-date
         super().hideEvent(e)
 
     def eventFilter(self, obj, event):
@@ -1055,6 +1054,11 @@ class ResourcesTab(QtWidgets.QWidget):
                 ax = plot.getPlotItem().getAxis(name)
                 ax.setPen(fg)
                 ax.setTextPen(fg)
+
+        # Labels using style sheets need manual palette updates
+        fg_hex = fg.name()
+        self.cpu_total_label.setStyleSheet(f"margin-left:2px; color: {fg_hex};")
+        self.cpu_freq_avg_label.setStyleSheet(f"margin-left:2px; color: {fg_hex};")
 
     # ---------- TEXT TIMER (legend & labels) ----------
     def _update_text(self):
@@ -1516,12 +1520,21 @@ class PreferencesDialog(QtWidgets.QDialog):
       - Smooth graphs (EMA filtering)
       - Extra smoothing (double-EMA) for CPU lines
       - Enable/disable antialiasing
+      - Theme selection
     """
-    def __init__(self, resources_tab: ResourcesTab, processes_tab: ProcessesTab, parent=None):
+    def __init__(
+        self,
+        resources_tab: ResourcesTab,
+        processes_tab: ProcessesTab,
+        themes: Dict[str, QtGui.QPalette],
+        current_theme: str,
+        parent=None,
+    ):
         super().__init__(parent)
         self.setWindowTitle("Preferences")
         self.resources_tab = resources_tab
         self.processes_tab = processes_tab
+        self.themes = themes
 
         form = QtWidgets.QFormLayout()
         form.setLabelAlignment(QtCore.Qt.AlignRight)
@@ -1587,6 +1600,11 @@ class PreferencesDialog(QtWidgets.QDialog):
         self.in_antialias = QtWidgets.QCheckBox("Enable antialiasing (smooth curves)")
         self.in_antialias.setChecked(resources_tab.ANTIALIAS)
 
+        self.in_theme = QtWidgets.QComboBox()
+        for name in themes.keys():
+            self.in_theme.addItem(name)
+        self.in_theme.setCurrentText(current_theme)
+
         form.addRow("History window (seconds):", self.in_history)
         form.addRow("Plot update interval (ms):", self.in_plot)
         form.addRow("Text update interval (ms):", self.in_text)
@@ -1602,6 +1620,7 @@ class PreferencesDialog(QtWidgets.QDialog):
         form.addRow(self.in_smooth)
         form.addRow(self.in_extra)
         form.addRow(self.in_antialias)
+        form.addRow("Theme:", self.in_theme)
 
         btns = QtWidgets.QDialogButtonBox(
             QtWidgets.QDialogButtonBox.Ok | QtWidgets.QDialogButtonBox.Apply | QtWidgets.QDialogButtonBox.Cancel
@@ -1630,6 +1649,7 @@ class PreferencesDialog(QtWidgets.QDialog):
             bool(self.in_smooth.isChecked()),
             bool(self.in_extra.isChecked()),
             bool(self.in_antialias.isChecked()),
+            self.in_theme.currentText(),
         )
 
     def apply(self):
@@ -1648,6 +1668,7 @@ class PreferencesDialog(QtWidgets.QDialog):
             smooth,
             extra,
             antialias,
+            theme_name,
         ) = self._read_values()
         self.resources_tab.apply_settings(
             history,
@@ -1665,6 +1686,9 @@ class PreferencesDialog(QtWidgets.QDialog):
             antialias,
         )
         self.processes_tab.set_update_ms(proc_ms)
+        parent = self.parent()
+        if parent is not None and hasattr(parent, "apply_theme"):
+            parent.apply_theme(theme_name)
 
     def accept(self):
         self.apply()
@@ -1694,6 +1718,14 @@ class MainWindow(QtWidgets.QMainWindow):
         v = QtWidgets.QVBoxLayout(container)
         v.setContentsMargins(6, 6, 6, 6)
         v.addWidget(self.tabs)
+
+        # Preferences button in the lower right corner
+        btn_layout = QtWidgets.QHBoxLayout()
+        btn_layout.addStretch(1)
+        self.pref_btn = QtWidgets.QPushButton("Preferences")
+        self.pref_btn.clicked.connect(self.open_preferences)
+        btn_layout.addWidget(self.pref_btn)
+        v.addLayout(btn_layout)
         self.setCentralWidget(container)
 
         # Preferences directory and theme support
@@ -1706,29 +1738,6 @@ class MainWindow(QtWidgets.QMainWindow):
         self.themes = build_theme_dict()
         self.current_theme = None
 
-        # Toolbar with Theme menu and Preferences (right aligned)
-        tb = QtWidgets.QToolBar()
-        tb.setMovable(False)
-        tb.setIconSize(QtCore.QSize(18, 18))
-        self.addToolBar(QtCore.Qt.TopToolBarArea, tb)
-
-        self.theme_btn = QtWidgets.QToolButton()
-        self.theme_btn.setText("Theme")
-        theme_menu = QtWidgets.QMenu(self)
-        for name in self.themes.keys():
-            act = theme_menu.addAction(name)
-            act.triggered.connect(lambda _=False, n=name: self.apply_theme(n))
-        self.theme_btn.setMenu(theme_menu)
-        self.theme_btn.setPopupMode(QtWidgets.QToolButton.InstantPopup)
-        tb.addWidget(self.theme_btn)
-
-        pref_act = QtWidgets.QAction("Preferences", self)
-        pref_act.triggered.connect(self.open_preferences)
-        tb.addAction(pref_act)
-        spacer = QtWidgets.QWidget()
-        spacer.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Preferred)
-        tb.addWidget(spacer)
-
         default_theme = "Deep Dark"
         if self.theme_file.exists():
             try:
@@ -1738,7 +1747,13 @@ class MainWindow(QtWidgets.QMainWindow):
         self.apply_theme(default_theme)
 
     def open_preferences(self):
-        dlg = PreferencesDialog(self.resources_tab, self.processes_tab, self)
+        dlg = PreferencesDialog(
+            self.resources_tab,
+            self.processes_tab,
+            self.themes,
+            self.current_theme,
+            self,
+        )
         dlg.exec_()
 
     def apply_theme(self, name: str):
