@@ -2049,6 +2049,8 @@ class PreferencesDialog(QtWidgets.QDialog):
         global_form.addRow("Grid squares per axis:", self.in_grid_divs)
         global_form.addRow(self.in_net_smooth)
         global_form.addRow(self.in_antialias)
+        # Allow toggling translucent fill for the average CPU curve
+        global_form.addRow(self.in_cpu_fill)
 
         thread_group = QtWidgets.QGroupBox("Multi-thread view")
         thread_form = QtWidgets.QFormLayout(thread_group)
@@ -2060,8 +2062,6 @@ class PreferencesDialog(QtWidgets.QDialog):
         general_group = QtWidgets.QGroupBox("General view")
         general_form = QtWidgets.QFormLayout(general_group)
         general_form.setLabelAlignment(QtCore.Qt.AlignRight)
-        # Allow toggling translucent fill for the average CPU curve
-        general_form.addRow(self.in_cpu_fill)
         # User-selectable color for the average CPU usage curve
         general_form.addRow("Curve color:", self.in_general_btn)
 
