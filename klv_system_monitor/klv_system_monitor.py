@@ -604,6 +604,7 @@ class ResourcesTab(QtWidgets.QWidget):
     TEXT_UPDATE_MS    = 1000    # legend/labels cadence
     EMA_ALPHA         = 0.60   # base EMA alpha
     MEM_EMA_ALPHA     = 0.90
+    NET_EMA_ALPHA     = 0.60   # independent network EMA alpha
     SHOW_CPU_FREQ     = IS_LINUX
     SMOOTH_GRAPHS     = True   # global smoothing toggle
     EXTRA_SMOOTHING   = True   # double-EMA for CPU lines (tames spikes)
@@ -615,6 +616,10 @@ class ResourcesTab(QtWidgets.QWidget):
     FILL_CPU          = False  # optionally fill area under CPU lines
     SMOOTH_NET_GRAPH  = True   # independent network smoothing toggle
     CPU_FILL_ALPHA    = 80     # alpha value for CPU area fills (0-255)
+    CPU_MINI_MIN_W    = 120    # minimum width for mini-plots in multi window
+    CPU_MINI_MIN_H    = 80     # minimum height for mini-plots in multi window
+    CPU_MULTI_COLS    = 5      # default columns for multi window layout
+    CPU_MULTI_MONO    = False  # use a single color for all mini-plots
 
     # CPU view modes
     CPU_VIEW_MODES = ["Multi thread", "General view", "Multi window"]
@@ -660,6 +665,8 @@ class ResourcesTab(QtWidgets.QWidget):
             hue = i / max(1, self.n_cpu)
             color = QtGui.QColor.fromHsvF(hue, 0.75, 0.95, 1.0)
             self.cpu_colors.append(color)
+        # Default mono-color uses the first generated color
+        self.cpu_mono_color = QtGui.QColor(self.cpu_colors[0])
         for i in range(self.n_cpu):
             history = deque([0.0] * history_len, maxlen=history_len)
             self.cpu_histories.append(history)
@@ -722,10 +729,12 @@ class ResourcesTab(QtWidgets.QWidget):
         self.cpu_multi_layout = QtWidgets.QGridLayout(self.cpu_multi_container)
         self.cpu_multi_layout.setContentsMargins(0, 0, 0, 0)
         self.cpu_multi_layout.setSpacing(6)
-        cols = 5
+        cols = self.CPU_MULTI_COLS
         for i in range(self.n_cpu):
             axis_b = TimeAxisItem(history_len, self.PLOT_UPDATE_MS / 1000.0)
             axis_l = PercentAxisItem()
+            axis_b.setStyle(showValues=False)
+            axis_l.setStyle(showValues=False)
             plot = pg.PlotWidget(axisItems={"bottom": axis_b, "left": axis_l})
             plot.showAxis("right", False)
             self._apply_grid(plot)
@@ -736,17 +745,17 @@ class ResourcesTab(QtWidgets.QWidget):
             plot.setSizePolicy(
                 QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Expanding
             )
-            plot.showAxis("left", False)
-            plot.showAxis("bottom", False)
+            plot.setMinimumSize(self.CPU_MINI_MIN_W, self.CPU_MINI_MIN_H)
             plot.installEventFilter(self)
-            pen = pg.mkPen(color=self.cpu_colors[i], width=self.THREAD_LINE_WIDTH)
+            color = self.cpu_mono_color if self.CPU_MULTI_MONO else self.cpu_colors[i]
+            pen = pg.mkPen(color=color, width=self.THREAD_LINE_WIDTH)
             curve = plot.plot([0] * history_len, pen=pen)
             try:
                 curve.setClipToView(True)
                 curve.setDownsampling(auto=True, method="mean")
             except Exception:
                 pass
-            label = pg.TextItem("", color=self.cpu_colors[i], anchor=(0.5, 0))
+            label = pg.TextItem("", color=color, anchor=(0.5, 0))
             label.setPos((history_len - 1) / 2, 100)
             plot.addItem(label)
             self.cpu_mini_plots.append(plot)
@@ -911,6 +920,20 @@ class ResourcesTab(QtWidgets.QWidget):
             else:
                 curve.setBrush(None)
                 curve.setFillLevel(None)
+
+    def _apply_multi_colors(self):
+        """Update mini-plot pens/labels according to mono-color settings."""
+        for i, (curve, lbl) in enumerate(zip(self.cpu_mini_curves, self.cpu_mini_labels)):
+            color = self.cpu_mono_color if self.CPU_MULTI_MONO else self.cpu_colors[i]
+            pen = pg.mkPen(color=color, width=self.THREAD_LINE_WIDTH)
+            curve.setPen(pen)
+            lbl.setColor(color)
+
+    def _regrid_mini_plots(self):
+        """Reposition mini CPU plots based on current column count."""
+        cols = max(1, self.CPU_MULTI_COLS)
+        for i, plot in enumerate(self.cpu_mini_plots):
+            self.cpu_multi_layout.addWidget(plot, i // cols, i % cols)
         if self.FILL_CPU:
             c0 = QtGui.QColor(self.cpu_colors[0])
             c0.setAlpha(self.CPU_FILL_ALPHA)
@@ -921,7 +944,7 @@ class ResourcesTab(QtWidgets.QWidget):
             self.cpu_general_curve.setFillLevel(None)
         for i, curve in enumerate(self.cpu_mini_curves):
             if self.FILL_CPU:
-                c = QtGui.QColor(self.cpu_colors[i])
+                c = QtGui.QColor(self.cpu_mono_color if self.CPU_MULTI_MONO else self.cpu_colors[i])
                 c.setAlpha(self.CPU_FILL_ALPHA)
                 curve.setBrush(c)
                 curve.setFillLevel(0)
@@ -1027,18 +1050,26 @@ class ResourcesTab(QtWidgets.QWidget):
             self.cpu_colors[cpu_index] = color
             pen = pg.mkPen(color=color, width=self.THREAD_LINE_WIDTH)
             self.cpu_curves[cpu_index].setPen(pen)
-            self.cpu_mini_curves[cpu_index].setPen(pen)
             if cpu_index == 0:
                 self.cpu_general_curve.setPen(pen)
             if self.FILL_CPU:
                 c = QtGui.QColor(color)
                 c.setAlpha(self.CPU_FILL_ALPHA)
                 self.cpu_curves[cpu_index].setBrush(c)
-                self.cpu_mini_curves[cpu_index].setBrush(c)
                 if cpu_index == 0:
                     self.cpu_general_curve.setBrush(c)
-            if cpu_index < len(self.cpu_mini_labels):
-                self.cpu_mini_labels[cpu_index].setColor(color)
+            if not self.CPU_MULTI_MONO and cpu_index < len(self.cpu_mini_curves):
+                self.cpu_mini_curves[cpu_index].setPen(pen)
+                if self.FILL_CPU:
+                    c = QtGui.QColor(color)
+                    c.setAlpha(self.CPU_FILL_ALPHA)
+                    self.cpu_mini_curves[cpu_index].setBrush(c)
+                if cpu_index < len(self.cpu_mini_labels):
+                    self.cpu_mini_labels[cpu_index].setColor(color)
+            else:
+                self._apply_multi_colors()
+                if self.FILL_CPU:
+                    self._apply_cpu_fill()
 
     def set_cpu_view_mode(self, mode: str):
         if mode not in self.CPU_VIEW_MODES:
@@ -1071,6 +1102,7 @@ class ResourcesTab(QtWidgets.QWidget):
             lay.setStretch(0, 3)
             for p in self.cpu_mini_plots:
                 self._update_tick_steps(p)
+            self._apply_multi_colors()
         self.cpu_section.default_stretch = 2
 
     def _apply_freq_visibility(self):
@@ -1162,6 +1194,12 @@ class ResourcesTab(QtWidgets.QWidget):
         cpu_view_mode: str,
         fill_cpu: bool,
         smooth_net_graph: bool,
+        net_ema_alpha: float,
+        mini_w: int,
+        mini_h: int,
+        multi_cols: int,
+        multi_mono: bool,
+        mono_color: str,
     ):
         """Rebuild buffers/axes and timers according to Preferences."""
         self.HISTORY_SECONDS   = int(max(5, history_seconds))
@@ -1180,6 +1218,13 @@ class ResourcesTab(QtWidgets.QWidget):
         pg.setConfigOptions(antialias=self.ANTIALIAS)
         self.FILL_CPU          = bool(fill_cpu)
         self.SMOOTH_NET_GRAPH  = bool(smooth_net_graph)
+        self.NET_EMA_ALPHA     = float(min(0.999, max(0.0, net_ema_alpha)))
+        self.CPU_MINI_MIN_W    = int(max(20, mini_w))
+        self.CPU_MINI_MIN_H    = int(max(20, mini_h))
+        self.CPU_MULTI_COLS    = int(max(1, multi_cols))
+        self.CPU_MULTI_MONO    = bool(multi_mono)
+        if mono_color:
+            self.cpu_mono_color = QtGui.QColor(mono_color)
         self.set_cpu_view_mode(cpu_view_mode)
 
         # Update timers only if currently active
@@ -1201,10 +1246,13 @@ class ResourcesTab(QtWidgets.QWidget):
         for plot in [self.cpu_plot, self.mem_plot, self.net_plot, self.cpu_general_plot] + self.cpu_mini_plots:
             plot.setXRange(0, history_len - 1)
             self._apply_grid(plot)
+            if plot in self.cpu_mini_plots:
+                plot.setMinimumSize(self.CPU_MINI_MIN_W, self.CPU_MINI_MIN_H)
         self._update_tick_steps()
         self._update_tick_steps(self.cpu_general_plot)
         for p in self.cpu_mini_plots:
             self._update_tick_steps(p)
+        self._regrid_mini_plots()
 
         # Rebuild buffers for graphs
         self.cpu_histories = [deque([0.0] * history_len, maxlen=history_len) for _ in range(self.n_cpu)]
@@ -1212,10 +1260,9 @@ class ResourcesTab(QtWidgets.QWidget):
             pen = pg.mkPen(color=self.cpu_colors[i], width=self.THREAD_LINE_WIDTH)
             curve.setPen(pen)
             curve.setData([0.0] * history_len)
-        for i, curve in enumerate(self.cpu_mini_curves):
-            pen = pg.mkPen(color=self.cpu_colors[i], width=self.THREAD_LINE_WIDTH)
-            curve.setPen(pen)
+        for curve in self.cpu_mini_curves:
             curve.setData([0.0] * history_len)
+        self._apply_multi_colors()
         self.cpu_general_history = deque([0.0] * history_len, maxlen=history_len)
         self.cpu_general_curve.setData([0.0] * history_len)
         self.cpu_plot_ema1 = [0.0] * self.n_cpu
@@ -1277,9 +1324,9 @@ class ResourcesTab(QtWidgets.QWidget):
             raw = max(0.0, float(per[i]))
             self.cpu_last_raw[i] = raw
             if self.SMOOTH_GRAPHS:
-                a = self.EMA_ALPHA
-                self.cpu_display_ema1[i] = a * self.cpu_display_ema1[i] + (1.0 - a) * raw
-                self.cpu_display_ema2[i] = a * self.cpu_display_ema2[i] + (1.0 - a) * self.cpu_display_ema1[i]
+                a_cpu = self.EMA_ALPHA
+                self.cpu_display_ema1[i] = a_cpu * self.cpu_display_ema1[i] + (1.0 - a_cpu) * raw
+                self.cpu_display_ema2[i] = a_cpu * self.cpu_display_ema2[i] + (1.0 - a_cpu) * self.cpu_display_ema1[i]
                 smoothed = (
                     2 * self.cpu_display_ema1[i] - self.cpu_display_ema2[i]
                     if self.EXTRA_SMOOTHING
@@ -1306,7 +1353,7 @@ class ResourcesTab(QtWidgets.QWidget):
                 freq_txt = ""
                 if self.SHOW_CPU_FREQ and per_freq_mhz and i < len(per_freq_mhz):
                     freq_txt = f" {human_freq(per_freq_mhz[i])}"
-                lbl.setText(f"{usages[i]:.0f}%{freq_txt}")
+                lbl.setText(f"CPU{i+1}: {usages[i]:.0f}%{freq_txt}")
         self.cpu_freq_avg_label.setVisible(self.SHOW_CPU_FREQ)
         if self.SHOW_CPU_FREQ:
             self.cpu_freq_avg_label.setText(
@@ -1321,13 +1368,13 @@ class ResourcesTab(QtWidgets.QWidget):
     # ---------- PLOT TIMER (graphs only) ----------
     def _update_plots(self):
         # CPU: optional smoothing toward the latest raw usage values
-        a = self.EMA_ALPHA
+        a_cpu = self.EMA_ALPHA
         avg_vals: List[float] = []
         for i in range(self.n_cpu):
             if self.SMOOTH_GRAPHS:
-                self.cpu_plot_ema1[i] = a * self.cpu_plot_ema1[i] + (1.0 - a) * self.cpu_last_raw[i]
+                self.cpu_plot_ema1[i] = a_cpu * self.cpu_plot_ema1[i] + (1.0 - a_cpu) * self.cpu_last_raw[i]
                 if self.EXTRA_SMOOTHING:
-                    self.cpu_plot_ema2[i] = a * self.cpu_plot_ema2[i] + (1.0 - a) * self.cpu_plot_ema1[i]
+                    self.cpu_plot_ema2[i] = a_cpu * self.cpu_plot_ema2[i] + (1.0 - a_cpu) * self.cpu_plot_ema1[i]
                     use_val = 2 * self.cpu_plot_ema1[i] - self.cpu_plot_ema2[i]
                 else:
                     use_val = self.cpu_plot_ema1[i]
@@ -1389,8 +1436,9 @@ class ResourcesTab(QtWidgets.QWidget):
         self.prev_net, self.prev_t = cur, now
 
         if self.SMOOTH_NET_GRAPH:
-            self.net_ema_rx = a * self.net_ema_rx + (1.0 - a) * rx_kib
-            self.net_ema_tx = a * self.net_ema_tx + (1.0 - a) * tx_kib
+            na = self.NET_EMA_ALPHA
+            self.net_ema_rx = na * self.net_ema_rx + (1.0 - na) * rx_kib
+            self.net_ema_tx = na * self.net_ema_tx + (1.0 - na) * tx_kib
             rx_use = self.net_ema_rx
             tx_use = self.net_ema_tx
         else:
@@ -1739,6 +1787,7 @@ class PreferencesDialog(QtWidgets.QDialog):
       - Processes refresh interval (ms)
       - CPU EMA alpha
       - Memory EMA alpha
+      - Network EMA alpha
       - Show per-CPU frequencies
       - Thread line width (px)
       - Toggle X grid / Y grid
@@ -1749,6 +1798,7 @@ class PreferencesDialog(QtWidgets.QDialog):
       - Smooth network graph (EMA)
       - Enable/disable antialiasing
       - CPU view mode
+      - Mini plot size/columns and mono color for Multi window mode
       - Theme selection
     """
     def __init__(
@@ -1799,6 +1849,12 @@ class PreferencesDialog(QtWidgets.QDialog):
         self.in_mem_ema.setSingleStep(0.01)
         self.in_mem_ema.setValue(resources_tab.MEM_EMA_ALPHA)
 
+        self.in_net_ema = QtWidgets.QDoubleSpinBox()
+        self.in_net_ema.setDecimals(3)
+        self.in_net_ema.setRange(0.0, 0.999)
+        self.in_net_ema.setSingleStep(0.01)
+        self.in_net_ema.setValue(resources_tab.NET_EMA_ALPHA)
+
         self.in_show_freq: Optional[QtWidgets.QCheckBox] = None
         if IS_LINUX:
             self.in_show_freq = QtWidgets.QCheckBox("Show per-CPU frequencies (and average)")
@@ -1839,6 +1895,27 @@ class PreferencesDialog(QtWidgets.QDialog):
             self.in_cpu_mode.addItem(name)
         self.in_cpu_mode.setCurrentText(resources_tab.cpu_view_mode)
 
+        self.in_mini_w = QtWidgets.QSpinBox()
+        self.in_mini_w.setRange(20, 1000)
+        self.in_mini_w.setValue(resources_tab.CPU_MINI_MIN_W)
+
+        self.in_mini_h = QtWidgets.QSpinBox()
+        self.in_mini_h.setRange(20, 1000)
+        self.in_mini_h.setValue(resources_tab.CPU_MINI_MIN_H)
+
+        self.in_multi_cols = QtWidgets.QSpinBox()
+        self.in_multi_cols.setRange(1, 32)
+        self.in_multi_cols.setValue(resources_tab.CPU_MULTI_COLS)
+
+        self.in_mono_chk = QtWidgets.QCheckBox("Mono color for multi-window plots")
+        self.in_mono_chk.setChecked(resources_tab.CPU_MULTI_MONO)
+        self.mono_color = QtGui.QColor(resources_tab.cpu_mono_color)
+        self.in_mono_btn = QtWidgets.QPushButton("Pick color")
+        self.in_mono_btn.clicked.connect(self._choose_mono_color)
+        self.in_mono_chk.toggled.connect(self.in_mono_btn.setEnabled)
+        self.in_mono_btn.setEnabled(resources_tab.CPU_MULTI_MONO)
+        self._update_mono_btn()
+
         self.in_theme = QtWidgets.QComboBox()
         for name in themes.keys():
             self.in_theme.addItem(name)
@@ -1850,6 +1927,7 @@ class PreferencesDialog(QtWidgets.QDialog):
         form.addRow("Processes refresh interval (ms):", self.in_proc)
         form.addRow("CPU EMA alpha (0–0.999):", self.in_ema)
         form.addRow("Memory EMA alpha (0–0.999):", self.in_mem_ema)
+        form.addRow("Network EMA alpha (0–0.999):", self.in_net_ema)
         if self.in_show_freq is not None:
             form.addRow(self.in_show_freq)
         form.addRow("Thread line width (px):", self.in_width)
@@ -1862,6 +1940,10 @@ class PreferencesDialog(QtWidgets.QDialog):
         form.addRow(self.in_net_smooth)
         form.addRow(self.in_antialias)
         form.addRow("CPU view mode:", self.in_cpu_mode)
+        form.addRow("Mini plot min width (px):", self.in_mini_w)
+        form.addRow("Mini plot min height (px):", self.in_mini_h)
+        form.addRow("Multi-window columns:", self.in_multi_cols)
+        form.addRow(self.in_mono_chk, self.in_mono_btn)
         form.addRow("Theme:", self.in_theme)
 
         btns = QtWidgets.QDialogButtonBox(
@@ -1881,6 +1963,15 @@ class PreferencesDialog(QtWidgets.QDialog):
         lay.addLayout(form)
         lay.addWidget(btns)
 
+    def _update_mono_btn(self):
+        self.in_mono_btn.setStyleSheet(f"background-color: {self.mono_color.name()};")
+
+    def _choose_mono_color(self):
+        col = QtWidgets.QColorDialog.getColor(self.mono_color, self, "Select color")
+        if col.isValid():
+            self.mono_color = col
+            self._update_mono_btn()
+
     def _read_values(self):
         return (
             int(self.in_history.value()),
@@ -1889,6 +1980,7 @@ class PreferencesDialog(QtWidgets.QDialog):
             int(self.in_proc.value()),
             float(self.in_ema.value()),
             float(self.in_mem_ema.value()),
+            float(self.in_net_ema.value()),
             bool(self.in_show_freq.isChecked()) if self.in_show_freq is not None else False,
             float(self.in_width.value()),
             bool(self.in_grid_x.isChecked()),
@@ -1900,6 +1992,11 @@ class PreferencesDialog(QtWidgets.QDialog):
             self.in_cpu_mode.currentText(),
             bool(self.in_cpu_fill.isChecked()),
             bool(self.in_net_smooth.isChecked()),
+            int(self.in_mini_w.value()),
+            int(self.in_mini_h.value()),
+            int(self.in_multi_cols.value()),
+            bool(self.in_mono_chk.isChecked()),
+            self.mono_color.name(),
             self.in_theme.currentText(),
         )
 
@@ -1911,6 +2008,7 @@ class PreferencesDialog(QtWidgets.QDialog):
             proc_ms,
             ema,
             mem_ema,
+            net_ema,
             show_freq,
             width,
             grid_x,
@@ -1922,6 +2020,11 @@ class PreferencesDialog(QtWidgets.QDialog):
             cpu_mode,
             fill_cpu,
             net_smooth,
+            mini_w,
+            mini_h,
+            multi_cols,
+            mono_chk,
+            mono_color,
             theme_name,
         ) = self._read_values()
         self.resources_tab.apply_settings(
@@ -1930,6 +2033,7 @@ class PreferencesDialog(QtWidgets.QDialog):
             text_ms,
             ema,
             mem_ema,
+            net_ema,
             show_freq,
             width,
             grid_x,
@@ -1941,6 +2045,11 @@ class PreferencesDialog(QtWidgets.QDialog):
             cpu_mode,
             fill_cpu,
             net_smooth,
+            mini_w,
+            mini_h,
+            multi_cols,
+            mono_chk,
+            mono_color,
         )
         self.processes_tab.set_update_ms(proc_ms)
         parent = self.parent()
@@ -1953,6 +2062,7 @@ class PreferencesDialog(QtWidgets.QDialog):
                     "proc_update_ms": proc_ms,
                     "ema_alpha": ema,
                     "mem_ema_alpha": mem_ema,
+                    "net_ema_alpha": net_ema,
                     "show_cpu_freq": show_freq,
                     "thread_line_width": width,
                     "show_grid_x": grid_x,
@@ -1964,6 +2074,11 @@ class PreferencesDialog(QtWidgets.QDialog):
                     "cpu_view_mode": cpu_mode,
                     "fill_cpu": fill_cpu,
                     "smooth_net_graph": net_smooth,
+                    "cpu_mini_min_w": mini_w,
+                    "cpu_mini_min_h": mini_h,
+                    "cpu_multi_cols": multi_cols,
+                    "cpu_multi_mono": mono_chk,
+                    "cpu_mono_color": mono_color,
                 }
             )
         if parent is not None and hasattr(parent, "apply_theme"):
@@ -1980,6 +2095,7 @@ class PreferencesDialog(QtWidgets.QDialog):
         self.in_proc.setValue(ProcessesTab.UPDATE_MS)
         self.in_ema.setValue(ResourcesTab.EMA_ALPHA)
         self.in_mem_ema.setValue(ResourcesTab.MEM_EMA_ALPHA)
+        self.in_net_ema.setValue(ResourcesTab.NET_EMA_ALPHA)
         if self.in_show_freq is not None:
             self.in_show_freq.setChecked(ResourcesTab.SHOW_CPU_FREQ)
         self.in_width.setValue(ResourcesTab.THREAD_LINE_WIDTH)
@@ -1993,6 +2109,13 @@ class PreferencesDialog(QtWidgets.QDialog):
         self.in_net_smooth.setChecked(ResourcesTab.SMOOTH_NET_GRAPH)
         self.in_antialias.setChecked(ResourcesTab.ANTIALIAS)
         self.in_cpu_mode.setCurrentText(ResourcesTab.CPU_VIEW_MODE)
+        self.in_mini_w.setValue(ResourcesTab.CPU_MINI_MIN_W)
+        self.in_mini_h.setValue(ResourcesTab.CPU_MINI_MIN_H)
+        self.in_multi_cols.setValue(ResourcesTab.CPU_MULTI_COLS)
+        self.in_mono_chk.setChecked(ResourcesTab.CPU_MULTI_MONO)
+        self.in_mono_btn.setEnabled(ResourcesTab.CPU_MULTI_MONO)
+        self.mono_color = QtGui.QColor(self.resources_tab.cpu_colors[0])
+        self._update_mono_btn()
         self.in_theme.setCurrentText(DEFAULT_THEME)
         self.apply()
 
@@ -2100,6 +2223,12 @@ class MainWindow(QtWidgets.QMainWindow):
                 data.get("cpu_view_mode", self.resources_tab.CPU_VIEW_MODE),
                 data.get("fill_cpu", self.resources_tab.FILL_CPU),
                 data.get("smooth_net_graph", self.resources_tab.SMOOTH_NET_GRAPH),
+                data.get("net_ema_alpha", self.resources_tab.NET_EMA_ALPHA),
+                data.get("cpu_mini_min_w", self.resources_tab.CPU_MINI_MIN_W),
+                data.get("cpu_mini_min_h", self.resources_tab.CPU_MINI_MIN_H),
+                data.get("cpu_multi_cols", self.resources_tab.CPU_MULTI_COLS),
+                data.get("cpu_multi_mono", self.resources_tab.CPU_MULTI_MONO),
+                data.get("cpu_mono_color", self.resources_tab.cpu_mono_color.name()),
             )
             self.processes_tab.set_update_ms(
                 data.get("proc_update_ms", self.processes_tab.UPDATE_MS)
