@@ -126,16 +126,16 @@ def build_theme_dict() -> Dict[str, QtGui.QPalette]:
     themes["Dark-gold"] = dark_gold
 
     light = QtGui.QPalette()
-    light.setColor(QtGui.QPalette.Window, QtCore.Qt.white)
+    light.setColor(QtGui.QPalette.Window, QtGui.QColor(210, 210, 210)) 
     light.setColor(QtGui.QPalette.WindowText, QtCore.Qt.black)
-    light.setColor(QtGui.QPalette.Base, QtCore.Qt.white)
-    light.setColor(QtGui.QPalette.AlternateBase, QtGui.QColor(240, 240, 240))
-    light.setColor(QtGui.QPalette.ToolTipBase, QtCore.Qt.white)
+    light.setColor(QtGui.QPalette.Base, QtGui.QColor(230, 230, 230))  
+    light.setColor(QtGui.QPalette.AlternateBase, QtGui.QColor(210, 210, 210))  
+    light.setColor(QtGui.QPalette.ToolTipBase, QtGui.QColor(230, 230, 230))
     light.setColor(QtGui.QPalette.ToolTipText, QtCore.Qt.black)
     light.setColor(QtGui.QPalette.Text, QtCore.Qt.black)
-    light.setColor(QtGui.QPalette.Button, QtGui.QColor(240, 240, 240))
+    light.setColor(QtGui.QPalette.Button, QtGui.QColor(215, 215, 215))  
     light.setColor(QtGui.QPalette.ButtonText, QtCore.Qt.black)
-    light.setColor(QtGui.QPalette.Highlight, QtGui.QColor(53, 132, 228))
+    light.setColor(QtGui.QPalette.Highlight, QtGui.QColor(53, 132, 228)) 
     light.setColor(QtGui.QPalette.HighlightedText, QtCore.Qt.white)
     themes["Light"] = light
 
