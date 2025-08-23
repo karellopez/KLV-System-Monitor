@@ -949,7 +949,11 @@ class ResourcesTab(QtWidgets.QWidget):
                 curve.setFillLevel(None)
 
         # Average usage line (general view)
+        # Always update the pen so color changes affect the curve itself
+        pen = pg.mkPen(color=self.cpu_general_color, width=self.THREAD_LINE_WIDTH)
+        self.cpu_general_curve.setPen(pen)
         if self.FILL_CPU:
+            # Use the same color for the translucent fill under the curve
             c0 = QtGui.QColor(self.cpu_general_color)
             c0.setAlpha(self.CPU_FILL_ALPHA)
             self.cpu_general_curve.setBrush(c0)
@@ -2052,11 +2056,13 @@ class PreferencesDialog(QtWidgets.QDialog):
         thread_form.addRow("Thread line width (px):", self.in_width)
         thread_form.addRow(self.in_smooth)
         thread_form.addRow(self.in_extra)
-        thread_form.addRow(self.in_cpu_fill)
 
         general_group = QtWidgets.QGroupBox("General view")
         general_form = QtWidgets.QFormLayout(general_group)
         general_form.setLabelAlignment(QtCore.Qt.AlignRight)
+        # Allow toggling translucent fill for the average CPU curve
+        general_form.addRow(self.in_cpu_fill)
+        # User-selectable color for the average CPU usage curve
         general_form.addRow("Curve color:", self.in_general_btn)
 
         multi_group = QtWidgets.QGroupBox("Multi window")
@@ -2084,12 +2090,22 @@ class PreferencesDialog(QtWidgets.QDialog):
             self.restore_defaults
         )
 
+        # Make the dialog scrollable to keep controls reachable on small screens
+        content = QtWidgets.QWidget()
+        content_lay = QtWidgets.QVBoxLayout(content)
+        content_lay.addLayout(top_form)
+        content_lay.addWidget(global_group)
+        content_lay.addWidget(thread_group)
+        content_lay.addWidget(general_group)
+        content_lay.addWidget(multi_group)
+        content_lay.addStretch()
+
+        scroll = QtWidgets.QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setWidget(content)
+
         lay = QtWidgets.QVBoxLayout(self)
-        lay.addLayout(top_form)
-        lay.addWidget(global_group)
-        lay.addWidget(thread_group)
-        lay.addWidget(general_group)
-        lay.addWidget(multi_group)
+        lay.addWidget(scroll)
         lay.addWidget(btns)
 
     def _update_mono_btn(self):
