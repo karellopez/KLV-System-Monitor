@@ -613,6 +613,10 @@ class ResourcesTab(QtWidgets.QWidget):
     GRID_DIVS         = 10
     ANTIALIAS         = True
 
+    # CPU view modes
+    CPU_VIEW_MODES = ["Multi thread", "General view", "Multi window"]
+    CPU_VIEW_MODE   = "Multi thread"  # default
+
     def __init__(self, parent=None):
         super().__init__(parent)
 
@@ -628,6 +632,7 @@ class ResourcesTab(QtWidgets.QWidget):
         # ----- CPU plot (time bottom axis, percent left axis) -----
         self.n_cpu = psutil.cpu_count(logical=True) or 1
         history_len = self._history_len()
+        self.cpu_view_mode = self.CPU_VIEW_MODE
 
         self.cpu_axis_bottom = TimeAxisItem(history_len, self.PLOT_UPDATE_MS / 1000.0)
         self.cpu_axis_left   = PercentAxisItem()
@@ -678,6 +683,75 @@ class ResourcesTab(QtWidgets.QWidget):
         # Average frequency label (visible only when SHOW_CPU_FREQ is True)
         self.cpu_freq_avg_label = QtWidgets.QLabel("Average frequency: —")
         self.cpu_freq_avg_label.setStyleSheet("margin-left:2px;")
+
+        # ----- Additional CPU view widgets -----
+        # General view: single average usage line
+        self.cpu_gen_axis_bottom = TimeAxisItem(history_len, self.PLOT_UPDATE_MS / 1000.0)
+        self.cpu_gen_axis_left = PercentAxisItem()
+        self.cpu_general_plot = pg.PlotWidget(
+            axisItems={"bottom": self.cpu_gen_axis_bottom, "left": self.cpu_gen_axis_left}
+        )
+        self.cpu_general_plot.showAxis("right", False)
+        self._apply_grid(self.cpu_general_plot)
+        self.cpu_general_plot.setYRange(0, 100)
+        self.cpu_general_plot.setMouseEnabled(x=False, y=False)
+        self.cpu_general_plot.setMenuEnabled(False)
+        self.cpu_general_plot.setXRange(0, history_len - 1)
+        self.cpu_general_plot.setSizePolicy(
+            QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Expanding
+        )
+        self.cpu_general_plot.installEventFilter(self)
+        self.cpu_general_history = deque([0.0] * history_len, maxlen=history_len)
+        pen = pg.mkPen(color=self.cpu_colors[0], width=self.THREAD_LINE_WIDTH)
+        self.cpu_general_curve = self.cpu_general_plot.plot([0] * history_len, pen=pen)
+        try:
+            self.cpu_general_curve.setClipToView(True)
+            self.cpu_general_curve.setDownsampling(auto=True, method="mean")
+        except Exception:
+            pass
+
+        # Multi window: one plot per CPU core in a scrollable grid
+        self.cpu_mini_plots: List[pg.PlotWidget] = []
+        self.cpu_mini_curves: List[pg.PlotDataItem] = []
+        self.cpu_mini_axes_bottom: List[TimeAxisItem] = []
+        self.cpu_multi_container = QtWidgets.QWidget()
+        self.cpu_multi_layout = QtWidgets.QGridLayout(self.cpu_multi_container)
+        self.cpu_multi_layout.setContentsMargins(0, 0, 0, 0)
+        self.cpu_multi_layout.setSpacing(6)
+        cols = 5
+        for i in range(self.n_cpu):
+            axis_b = TimeAxisItem(history_len, self.PLOT_UPDATE_MS / 1000.0)
+            axis_l = PercentAxisItem()
+            plot = pg.PlotWidget(axisItems={"bottom": axis_b, "left": axis_l})
+            plot.showAxis("right", False)
+            self._apply_grid(plot)
+            plot.setYRange(0, 100)
+            plot.setMouseEnabled(x=False, y=False)
+            plot.setMenuEnabled(False)
+            plot.setXRange(0, history_len - 1)
+            plot.setSizePolicy(
+                QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Expanding
+            )
+            plot.installEventFilter(self)
+            pen = pg.mkPen(color=self.cpu_colors[i], width=self.THREAD_LINE_WIDTH)
+            curve = plot.plot([0] * history_len, pen=pen)
+            try:
+                curve.setClipToView(True)
+                curve.setDownsampling(auto=True, method="mean")
+            except Exception:
+                pass
+            self.cpu_mini_plots.append(plot)
+            self.cpu_mini_curves.append(curve)
+            self.cpu_mini_axes_bottom.append(axis_b)
+            self.cpu_multi_layout.addWidget(plot, i // cols, i % cols)
+
+        self.cpu_multi_scroll = QtWidgets.QScrollArea()
+        self.cpu_multi_scroll.setWidget(self.cpu_multi_container)
+        self.cpu_multi_scroll.setWidgetResizable(True)
+        self.cpu_multi_scroll.setFrameShape(QtWidgets.QFrame.NoFrame)
+        self.cpu_multi_scroll.setSizePolicy(
+            QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Expanding
+        )
 
         # ----- Memory / Swap (left % axis) -----
         self.mem_axis_bottom = TimeAxisItem(history_len, self.PLOT_UPDATE_MS / 1000.0)
@@ -746,14 +820,7 @@ class ResourcesTab(QtWidgets.QWidget):
         self.cpu_total_label.setStyleSheet("margin-left:2px;")
 
         self.cpu_section = CollapsibleSection("CPU")
-        self.cpu_section.add_widget(self.cpu_plot)
-        self.cpu_section.add_widget(self.cpu_legend_scroll)
-        self.cpu_section.add_widget(self.cpu_freq_avg_label)
-        self.cpu_section.add_widget(self.cpu_total_label)
-        # Allow the legend area to grow/shrink with the window height
-        self.cpu_section.content_layout.setStretch(0, 3)
-        self.cpu_section.content_layout.setStretch(1, 2)
-        self.cpu_section.default_stretch = 2
+        self.set_cpu_view_mode(self.cpu_view_mode)
 
         self.mem_section = CollapsibleSection("Memory and Swap")
         self.mem_section.add_widget(self.mem_plot)
@@ -804,7 +871,8 @@ class ResourcesTab(QtWidgets.QWidget):
         super().hideEvent(e)
 
     def eventFilter(self, obj, event):
-        if event.type() == QtCore.QEvent.Resize and obj in (self.cpu_plot, self.mem_plot, self.net_plot):
+        plots = [self.cpu_plot, self.cpu_general_plot] + self.cpu_mini_plots + [self.mem_plot, self.net_plot]
+        if event.type() == QtCore.QEvent.Resize and obj in plots:
             self._update_tick_steps(obj)
         return super().eventFilter(obj, event)
 
@@ -873,7 +941,8 @@ class ResourcesTab(QtWidgets.QWidget):
             p.getAxis('bottom').setTickSpacing(step_x, step_x)
 
             # ---------------- Y axis (values) ----------------
-            if p in (self.cpu_plot, self.mem_plot):
+            cpu_plots = [self.cpu_plot, self.mem_plot, self.cpu_general_plot] + self.cpu_mini_plots
+            if p in cpu_plots:
                 # Lock Y to 0..100 so CPU/Mem always show percentages consistently.
                 p.setYRange(0, 100)
 
@@ -912,6 +981,39 @@ class ResourcesTab(QtWidgets.QWidget):
             self.cpu_colors[cpu_index] = color
             pen = pg.mkPen(color=color, width=self.THREAD_LINE_WIDTH)
             self.cpu_curves[cpu_index].setPen(pen)
+
+    def set_cpu_view_mode(self, mode: str):
+        if mode not in self.CPU_VIEW_MODES:
+            mode = self.CPU_VIEW_MODE
+        self.cpu_view_mode = mode
+        lay = self.cpu_section.content_layout
+        while lay.count():
+            item = lay.takeAt(0)
+            w = item.widget()
+            if w:
+                w.setParent(None)
+        if mode == "Multi thread":
+            self.cpu_section.add_widget(self.cpu_plot)
+            self.cpu_section.add_widget(self.cpu_legend_scroll)
+            self.cpu_section.add_widget(self.cpu_freq_avg_label)
+            self.cpu_section.add_widget(self.cpu_total_label)
+            lay.setStretch(0, 3)
+            lay.setStretch(1, 2)
+            self._update_tick_steps(self.cpu_plot)
+        elif mode == "General view":
+            self.cpu_section.add_widget(self.cpu_general_plot)
+            self.cpu_section.add_widget(self.cpu_freq_avg_label)
+            self.cpu_section.add_widget(self.cpu_total_label)
+            lay.setStretch(0, 3)
+            self._update_tick_steps(self.cpu_general_plot)
+        else:  # Multi window
+            self.cpu_section.add_widget(self.cpu_multi_scroll)
+            self.cpu_section.add_widget(self.cpu_freq_avg_label)
+            self.cpu_section.add_widget(self.cpu_total_label)
+            lay.setStretch(0, 3)
+            for p in self.cpu_mini_plots:
+                self._update_tick_steps(p)
+        self.cpu_section.default_stretch = 2
 
     def _apply_freq_visibility(self):
         self.cpu_freq_avg_label.setVisible(self.SHOW_CPU_FREQ)
@@ -999,6 +1101,7 @@ class ResourcesTab(QtWidgets.QWidget):
         smooth_graphs: bool,
         extra_smoothing: bool,
         antialias: bool,
+        cpu_view_mode: str,
     ):
         """Rebuild buffers/axes and timers according to Preferences."""
         self.HISTORY_SECONDS   = int(max(5, history_seconds))
@@ -1015,6 +1118,7 @@ class ResourcesTab(QtWidgets.QWidget):
         self.EXTRA_SMOOTHING   = bool(extra_smoothing)
         self.ANTIALIAS         = bool(antialias)
         pg.setConfigOptions(antialias=self.ANTIALIAS)
+        self.set_cpu_view_mode(cpu_view_mode)
 
         # Update timers only if currently active
         was_plot = self.plot_timer.isActive()
@@ -1030,12 +1134,15 @@ class ResourcesTab(QtWidgets.QWidget):
 
         # Axes / ranges / grids
         history_len = self._history_len()
-        for axis in (self.cpu_axis_bottom, self.mem_axis_bottom, self.net_axis_bottom):
+        for axis in (self.cpu_axis_bottom, self.mem_axis_bottom, self.net_axis_bottom, self.cpu_gen_axis_bottom, *self.cpu_mini_axes_bottom):
             axis.update_params(history_len, self.PLOT_UPDATE_MS / 1000.0)
-        for plot in (self.cpu_plot, self.mem_plot, self.net_plot):
+        for plot in [self.cpu_plot, self.mem_plot, self.net_plot, self.cpu_general_plot] + self.cpu_mini_plots:
             plot.setXRange(0, history_len - 1)
             self._apply_grid(plot)
         self._update_tick_steps()
+        self._update_tick_steps(self.cpu_general_plot)
+        for p in self.cpu_mini_plots:
+            self._update_tick_steps(p)
 
         # Rebuild buffers for graphs
         self.cpu_histories = [deque([0.0] * history_len, maxlen=history_len) for _ in range(self.n_cpu)]
@@ -1043,6 +1150,12 @@ class ResourcesTab(QtWidgets.QWidget):
             pen = pg.mkPen(color=self.cpu_colors[i], width=self.THREAD_LINE_WIDTH)
             curve.setPen(pen)
             curve.setData([0.0] * history_len)
+        for i, curve in enumerate(self.cpu_mini_curves):
+            pen = pg.mkPen(color=self.cpu_colors[i], width=self.THREAD_LINE_WIDTH)
+            curve.setPen(pen)
+            curve.setData([0.0] * history_len)
+        self.cpu_general_history = deque([0.0] * history_len, maxlen=history_len)
+        self.cpu_general_curve.setData([0.0] * history_len)
         self.cpu_plot_ema1 = [0.0] * self.n_cpu
         self.cpu_plot_ema2 = [0.0] * self.n_cpu
         self.cpu_display_ema1 = [0.0] * self.n_cpu
@@ -1110,7 +1223,8 @@ class ResourcesTab(QtWidgets.QWidget):
         if self.SHOW_CPU_FREQ:
             per_freq_mhz, avg_freq = self._get_cpu_freqs()
 
-        self.cpu_legend_grid.set_values(usages, per_freq_mhz)
+        if self.cpu_view_mode == "Multi thread":
+            self.cpu_legend_grid.set_values(usages, per_freq_mhz)
         self.cpu_freq_avg_label.setVisible(self.SHOW_CPU_FREQ)
         if self.SHOW_CPU_FREQ:
             self.cpu_freq_avg_label.setText(
@@ -1126,6 +1240,7 @@ class ResourcesTab(QtWidgets.QWidget):
     def _update_plots(self):
         # CPU: optional smoothing toward the latest raw usage values
         a = self.EMA_ALPHA
+        avg_vals: List[float] = []
         for i in range(self.n_cpu):
             if self.SMOOTH_GRAPHS:
                 self.cpu_plot_ema1[i] = a * self.cpu_plot_ema1[i] + (1.0 - a) * self.cpu_last_raw[i]
@@ -1140,7 +1255,16 @@ class ResourcesTab(QtWidgets.QWidget):
                 use_val = self.cpu_last_raw[i]
             use_val = max(0.0, use_val)
             self.cpu_histories[i].append(use_val)
-            self.cpu_curves[i].setData(list(self.cpu_histories[i]))
+            avg_vals.append(use_val)
+            if self.cpu_view_mode == "Multi thread":
+                self.cpu_curves[i].setData(list(self.cpu_histories[i]))
+            elif self.cpu_view_mode == "Multi window":
+                self.cpu_mini_curves[i].setData(list(self.cpu_histories[i]))
+
+        if self.cpu_view_mode == "General view":
+            avg = sum(avg_vals) / len(avg_vals) if avg_vals else 0.0
+            self.cpu_general_history.append(avg)
+            self.cpu_general_curve.setData(list(self.cpu_general_history))
 
         # Memory / Swap (EMA)
         vm = psutil.virtual_memory()
@@ -1540,6 +1664,7 @@ class PreferencesDialog(QtWidgets.QDialog):
       - Smooth graphs (EMA filtering)
       - Extra smoothing (double-EMA) for CPU lines
       - Enable/disable antialiasing
+      - CPU view mode
       - Theme selection
     """
     def __init__(
@@ -1619,6 +1744,10 @@ class PreferencesDialog(QtWidgets.QDialog):
 
         self.in_antialias = QtWidgets.QCheckBox("Enable antialiasing (smooth curves)")
         self.in_antialias.setChecked(resources_tab.ANTIALIAS)
+        self.in_cpu_mode = QtWidgets.QComboBox()
+        for name in ResourcesTab.CPU_VIEW_MODES:
+            self.in_cpu_mode.addItem(name)
+        self.in_cpu_mode.setCurrentText(resources_tab.cpu_view_mode)
 
         self.in_theme = QtWidgets.QComboBox()
         for name in themes.keys():
@@ -1640,6 +1769,7 @@ class PreferencesDialog(QtWidgets.QDialog):
         form.addRow(self.in_smooth)
         form.addRow(self.in_extra)
         form.addRow(self.in_antialias)
+        form.addRow("CPU view mode:", self.in_cpu_mode)
         form.addRow("Theme:", self.in_theme)
 
         btns = QtWidgets.QDialogButtonBox(
@@ -1675,6 +1805,7 @@ class PreferencesDialog(QtWidgets.QDialog):
             bool(self.in_smooth.isChecked()),
             bool(self.in_extra.isChecked()),
             bool(self.in_antialias.isChecked()),
+            self.in_cpu_mode.currentText(),
             self.in_theme.currentText(),
         )
 
@@ -1694,6 +1825,7 @@ class PreferencesDialog(QtWidgets.QDialog):
             smooth,
             extra,
             antialias,
+            cpu_mode,
             theme_name,
         ) = self._read_values()
         self.resources_tab.apply_settings(
@@ -1710,6 +1842,7 @@ class PreferencesDialog(QtWidgets.QDialog):
             smooth,
             extra,
             antialias,
+            cpu_mode,
         )
         self.processes_tab.set_update_ms(proc_ms)
         parent = self.parent()
@@ -1730,6 +1863,7 @@ class PreferencesDialog(QtWidgets.QDialog):
                     "smooth_graphs": smooth,
                     "extra_smoothing": extra,
                     "antialias": antialias,
+                    "cpu_view_mode": cpu_mode,
                 }
             )
         if parent is not None and hasattr(parent, "apply_theme"):
@@ -1756,6 +1890,7 @@ class PreferencesDialog(QtWidgets.QDialog):
         self.in_extra.setChecked(ResourcesTab.EXTRA_SMOOTHING)
         self.in_extra.setEnabled(ResourcesTab.SMOOTH_GRAPHS)
         self.in_antialias.setChecked(ResourcesTab.ANTIALIAS)
+        self.in_cpu_mode.setCurrentText(ResourcesTab.CPU_VIEW_MODE)
         self.in_theme.setCurrentText(DEFAULT_THEME)
         self.apply()
 
@@ -1860,6 +1995,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 data.get("smooth_graphs", self.resources_tab.SMOOTH_GRAPHS),
                 data.get("extra_smoothing", self.resources_tab.EXTRA_SMOOTHING),
                 data.get("antialias", self.resources_tab.ANTIALIAS),
+                data.get("cpu_view_mode", self.resources_tab.CPU_VIEW_MODE),
             )
             self.processes_tab.set_update_ms(
                 data.get("proc_update_ms", self.processes_tab.UPDATE_MS)
