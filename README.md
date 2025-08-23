@@ -22,3 +22,6 @@ enabled again for crisp rendering and can now be toggled in Preferences.
 The Processes tab now updates only when visible, and its refresh interval is
 configurable via the Preferences dialog.
 
+The Processes tab also includes buttons to clear the current selection so the
+view stops following a particular process and to kill selected processes.
+
