@@ -1571,10 +1571,18 @@ class ProcessesTab(QtWidgets.QWidget):
         layout.setContentsMargins(10, 10, 10, 10)
         layout.setSpacing(6)
 
+        # Text box used to filter processes by name, user or PID
+        self.filter_edit = QtWidgets.QLineEdit()
+        self.filter_edit.setPlaceholderText("Filter by name, user, or PID...")
+        self.filter_edit.textChanged.connect(self.apply_filter)
+        layout.addWidget(self.filter_edit)
+
         self.table = QtWidgets.QTableWidget(0, len(self.COLUMNS))
         self.table.setHorizontalHeaderLabels(self.COLUMNS)
         self.table.setSortingEnabled(True)
         self.table.setSelectionBehavior(QtWidgets.QAbstractItemView.SelectRows)
+        # Allow selection of multiple processes
+        self.table.setSelectionMode(QtWidgets.QAbstractItemView.ExtendedSelection)
         self.table.setEditTriggers(QtWidgets.QAbstractItemView.NoEditTriggers)
         self.table.verticalHeader().setVisible(False)
         self.table.horizontalHeader().setSectionResizeMode(QtWidgets.QHeaderView.Interactive)
@@ -1585,6 +1593,7 @@ class ProcessesTab(QtWidgets.QWidget):
 
         layout.addWidget(self.table)
 
+        # Caches used during refresh
         self.prev_io: Dict[int, Tuple[int, int]] = {}
         self.prev_time = time.monotonic()
         self.row_for_pid: Dict[int, int] = {}
@@ -1610,10 +1619,56 @@ class ProcessesTab(QtWidgets.QWidget):
                 it.setToolTip(tip if tip else txt)
                 it.setData(QtCore.Qt.UserRole, txt if sortv is None else sortv)
 
+    def selected_pids(self) -> List[int]:
+        """Return list of PIDs for currently selected processes."""
+        pids: List[int] = []
+        for idx in self.table.selectionModel().selectedRows():
+            item = self.table.item(idx.row(), 3)
+            if item:
+                try:
+                    pids.append(int(item.text()))
+                except ValueError:
+                    pass
+        return pids
+
+    def restore_selection(self, pids: List[int]):
+        """Restore selection for *pids* and ensure the first one is visible."""
+        if not pids:
+            return
+        self.table.clearSelection()
+        first_row: Optional[int] = None
+        for pid in pids:
+            row = self.row_for_pid.get(pid)
+            if row is not None:
+                self.table.selectRow(row)
+                if first_row is None:
+                    first_row = row
+        if first_row is not None:
+            self.table.scrollToItem(
+                self.table.item(first_row, 0),
+                QtWidgets.QAbstractItemView.PositionAtCenter,
+            )
+
+    def apply_filter(self):
+        """Hide rows not matching the filter text."""
+        text = self.filter_edit.text().strip().lower()
+        for row in range(self.table.rowCount()):
+            if text:
+                name = self.table.item(row, 0).text().lower()
+                user = self.table.item(row, 1).text().lower()
+                pid = self.table.item(row, 3).text().lower()
+                match = text in name or text in user or text in pid
+            else:
+                match = True
+            self.table.setRowHidden(row, not match)
+
     def refresh(self):
         now = time.monotonic()
         dt = max(1e-6, now - self.prev_time)
         seen = set()
+
+        # Remember which processes were selected before refresh
+        selected = self.selected_pids()
 
         was_sorting = self.table.isSortingEnabled()
         self.table.setSortingEnabled(False)
@@ -1698,6 +1753,9 @@ class ProcessesTab(QtWidgets.QWidget):
                     except ValueError:
                         pass
             self.row_for_pid = new_map
+            # Apply filter and restore previous selection
+            self.apply_filter()
+            self.restore_selection(selected)
 
         finally:
             self.prev_time = now
@@ -1797,7 +1855,8 @@ class FileSystemsTab(QtWidgets.QWidget):
     def refresh(self):
         # ----- Mounted partitions with progress bar -----
         try:
-            parts = psutil.disk_partitions(all=False)
+            # Request all partitions so external drives are included
+            parts = psutil.disk_partitions(all=True)
         except Exception:
             parts = []
 
@@ -1807,20 +1866,33 @@ class FileSystemsTab(QtWidgets.QWidget):
                 usage = psutil.disk_usage(p.mountpoint)
             except Exception:
                 continue
-            if not p.device or usage.total <= 0:
+            # Ensure we have information for all columns
+            if not (p.device and p.mountpoint and p.fstype):
                 continue
+            if usage.total <= 0:
+                continue
+
             row = self.mounts.rowCount()
             self.mounts.insertRow(row)
 
-            self.mounts.setItem(row, 0, QtWidgets.QTableWidgetItem(p.device or "—"))
+            self.mounts.setItem(row, 0, QtWidgets.QTableWidgetItem(p.device))
             self.mounts.setItem(row, 1, QtWidgets.QTableWidgetItem(p.mountpoint))
-            self.mounts.setItem(row, 2, QtWidgets.QTableWidgetItem(p.fstype or "—"))
+            self.mounts.setItem(row, 2, QtWidgets.QTableWidgetItem(p.fstype))
             self.mounts.setItem(row, 3, QtWidgets.QTableWidgetItem(human_bytes(usage.total)))
             self.mounts.setItem(row, 4, QtWidgets.QTableWidgetItem(human_bytes(usage.free)))
 
             used_text = human_bytes(usage.used)
             used_widget = self._progress_cell(usage.percent, used_text)
             self.mounts.setCellWidget(row, 5, used_widget)
+
+        # Hide rows that still have missing data (safety check)
+        for row in range(self.mounts.rowCount()):
+            hide = False
+            for col in range(5):  # last column has widget
+                if self.mounts.item(row, col) is None:
+                    hide = True
+                    break
+            self.mounts.setRowHidden(row, hide)
 
         # ----- Per-disk I/O (totals + rates) -----
         now = time.monotonic()
