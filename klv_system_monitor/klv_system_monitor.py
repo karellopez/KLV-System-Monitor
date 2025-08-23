@@ -12,6 +12,7 @@
 #   - Separate plot vs text refresh intervals.
 #   - File Systems tab only lists active drives and refreshes on demand.
 #   - Processes tab refreshes only when visible and its interval is configurable.
+#   - Processes tab adds buttons to clear the selection and kill processes.
 #
 # Dependencies: psutil, PyQt5, pyqtgraph
 # License: MIT (adjust as desired)
@@ -1571,11 +1572,30 @@ class ProcessesTab(QtWidgets.QWidget):
         layout.setContentsMargins(10, 10, 10, 10)
         layout.setSpacing(6)
 
+        # --- Controls above the process table ---
+        controls = QtWidgets.QHBoxLayout()
+
         # Text box used to filter processes by name, user or PID
         self.filter_edit = QtWidgets.QLineEdit()
         self.filter_edit.setPlaceholderText("Filter by name, user, or PID...")
         self.filter_edit.textChanged.connect(self.apply_filter)
-        layout.addWidget(self.filter_edit)
+        controls.addWidget(self.filter_edit)
+
+        # Button allowing the user to clear any current selection so that the
+        # table no longer follows a particular process during refresh.
+        self.clear_btn = QtWidgets.QPushButton("Clear Selection")
+        self.clear_btn.setToolTip("Deselect all processes")
+        self.clear_btn.clicked.connect(self.table_clear_selection)
+        controls.addWidget(self.clear_btn)
+
+        # Button to terminate the selected processes.  A confirmation dialog is
+        # presented to prevent accidental termination.
+        self.kill_btn = QtWidgets.QPushButton("Kill Selected")
+        self.kill_btn.setToolTip("Kill highlighted process(es)")
+        self.kill_btn.clicked.connect(self.kill_selected)
+        controls.addWidget(self.kill_btn)
+
+        layout.addLayout(controls)
 
         self.table = QtWidgets.QTableWidget(0, len(self.COLUMNS))
         self.table.setHorizontalHeaderLabels(self.COLUMNS)
@@ -1592,6 +1612,8 @@ class ProcessesTab(QtWidgets.QWidget):
             self.table.setColumnWidth(i, w)
 
         layout.addWidget(self.table)
+        # Allow clearing selection with the Escape key
+        self.table.installEventFilter(self)
 
         # Caches used during refresh
         self.prev_io: Dict[int, Tuple[int, int]] = {}
@@ -1618,6 +1640,36 @@ class ProcessesTab(QtWidgets.QWidget):
                 it.setText(txt)
                 it.setToolTip(tip if tip else txt)
                 it.setData(QtCore.Qt.UserRole, txt if sortv is None else sortv)
+
+    def table_clear_selection(self):
+        """Deselect all rows in the process table."""
+        self.table.clearSelection()
+
+    def kill_selected(self):
+        """Kill all currently selected processes after confirmation."""
+        pids = self.selected_pids()
+        if not pids:
+            return
+        msg = ("Kill the selected process?" if len(pids) == 1
+               else f"Kill {len(pids)} selected processes?")
+        if QtWidgets.QMessageBox.question(
+            self,
+            "Confirm Kill",
+            msg,
+            QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No,
+        ) != QtWidgets.QMessageBox.Yes:
+            return
+        for pid in pids:
+            try:
+                psutil.Process(pid).kill()
+            except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess) as e:
+                QtWidgets.QMessageBox.warning(
+                    self,
+                    "Kill failed",
+                    f"PID {pid}: {e}",
+                )
+        # Immediately refresh so the table reflects the changes
+        self.refresh()
 
     def selected_pids(self) -> List[int]:
         """Return list of PIDs for currently selected processes."""
@@ -1761,6 +1813,16 @@ class ProcessesTab(QtWidgets.QWidget):
             self.prev_time = now
             self.table.setUpdatesEnabled(True)
             self.table.setSortingEnabled(was_sorting)
+
+    def eventFilter(self, obj, event):
+        """Handle custom shortcuts for the processes table."""
+        if obj is self.table and event.type() == QtCore.QEvent.KeyPress:
+            if event.key() == QtCore.Qt.Key_Escape:
+                # ESC clears the current selection so the view stops
+                # auto-centering on a process during refreshes.
+                self.table_clear_selection()
+                return True
+        return super().eventFilter(obj, event)
 
     def showEvent(self, e: QtGui.QShowEvent):
         if not self._primed:
