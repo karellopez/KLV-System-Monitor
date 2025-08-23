@@ -8,10 +8,12 @@ for efficiency, flexibility, and user control.
 CPU usage can be visualized in three modes—**Multi thread**, **General view**, and
 **Multi window**—selectable from the Preferences dialog.
 
-Plots adapt to the selected theme, and "Multi window" graphs hide axes while
-showing each core's usage (and frequency when enabled) atop its panel. The
-Preferences dialog also offers options to fill CPU graphs with translucent
-colors and to smooth only the network plot if desired.
+Plots adapt to the selected theme. "Multi window" graphs show axes without tick
+labels and overlay each core's usage, number, and optional frequency atop its
+panel. The Preferences dialog exposes controls for mini-plot size, column
+count, a single-color option for all cores, and separate EMA alphas for CPU,
+memory, and network graphs. CPU plots can optionally be filled with translucent
+color, and network smoothing can be toggled independently.
 
 Recent updates further reduce the monitor's own CPU usage by batching
 per-process information retrieval, decoupling plot and text refresh rates,
