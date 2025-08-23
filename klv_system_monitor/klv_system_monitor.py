@@ -1902,6 +1902,21 @@ class PreferencesDialog(QtWidgets.QDialog):
         self.processes_tab = processes_tab
         self.themes = themes
 
+        def _set_tip(
+            form: Optional[QtWidgets.QFormLayout], widget: QtWidgets.QWidget, tip: str
+        ) -> None:
+            """Assign a tooltip to *widget* and its associated label in *form*.
+
+            Using a helper keeps the tooltip strings close to the widgets while
+            ensuring both the field and its label (if any) share the same
+            explanation text.
+            """
+            widget.setToolTip(tip)
+            if form is not None:
+                label = form.labelForField(widget)
+                if label is not None:
+                    label.setToolTip(tip)
+
         self.in_history = QtWidgets.QSpinBox()
         self.in_history.setRange(5, 3600)
         self.in_history.setValue(resources_tab.HISTORY_SECONDS)
@@ -2030,33 +2045,100 @@ class PreferencesDialog(QtWidgets.QDialog):
         top_form = QtWidgets.QFormLayout()
         top_form.setLabelAlignment(QtCore.Qt.AlignRight)
         top_form.addRow("Theme:", self.in_theme)
+        _set_tip(top_form, self.in_theme, "Select the colour theme for the application.")
         top_form.addRow("CPU view mode:", self.in_cpu_mode)
+        _set_tip(top_form, self.in_cpu_mode, "Choose how CPU usage is displayed.")
 
         global_group = QtWidgets.QGroupBox("Global settings")
         global_form = QtWidgets.QFormLayout(global_group)
         global_form.setLabelAlignment(QtCore.Qt.AlignRight)
         global_form.addRow("History window (seconds):", self.in_history)
+        _set_tip(
+            global_form,
+            self.in_history,
+            "Amount of past data (in seconds) retained for graphs.",
+        )
         global_form.addRow("Plot update interval (ms):", self.in_plot)
+        _set_tip(
+            global_form,
+            self.in_plot,
+            "Delay between graph redraws. Smaller values update more often.",
+        )
         global_form.addRow("Text update interval (ms):", self.in_text)
+        _set_tip(
+            global_form,
+            self.in_text,
+            "How often labels and numbers are refreshed.",
+        )
         global_form.addRow("Processes refresh interval (ms):", self.in_proc)
+        _set_tip(
+            global_form,
+            self.in_proc,
+            "Update frequency for the process list.",
+        )
         global_form.addRow("CPU EMA alpha (0–0.999):", self.in_ema)
+        _set_tip(
+            global_form,
+            self.in_ema,
+            "Smoothing factor for CPU usage graphs (higher = less smoothing).",
+        )
         global_form.addRow("Memory EMA alpha (0–0.999):", self.in_mem_ema)
+        _set_tip(
+            global_form,
+            self.in_mem_ema,
+            "Smoothing factor for memory usage graphs.",
+        )
         global_form.addRow("Network EMA alpha (0–0.999):", self.in_net_ema)
+        _set_tip(
+            global_form,
+            self.in_net_ema,
+            "Smoothing factor for network usage graphs.",
+        )
         if self.in_show_freq is not None:
             global_form.addRow(self.in_show_freq)
+            _set_tip(
+                global_form,
+                self.in_show_freq,
+                "Display per-CPU frequency lines and their average.",
+            )
+        self.in_grid_x.setToolTip("Toggle vertical grid lines on plots.")
         global_form.addRow(self.in_grid_x)
+        self.in_grid_y.setToolTip("Toggle horizontal grid lines on plots.")
         global_form.addRow(self.in_grid_y)
         global_form.addRow("Grid squares per axis:", self.in_grid_divs)
+        _set_tip(
+            global_form,
+            self.in_grid_divs,
+            "Number of grid divisions along each axis.",
+        )
+        self.in_net_smooth.setToolTip("Smooth network graph using an EMA filter.")
         global_form.addRow(self.in_net_smooth)
+        self.in_antialias.setToolTip(
+            "Enable antialiasing for smoother but slower rendering."
+        )
         global_form.addRow(self.in_antialias)
         # Allow toggling translucent fill for the average CPU curve
+        self.in_cpu_fill.setToolTip(
+            "Fill the average CPU graph with a translucent colour."
+        )
         global_form.addRow(self.in_cpu_fill)
 
         thread_group = QtWidgets.QGroupBox("Multi-thread view")
         thread_form = QtWidgets.QFormLayout(thread_group)
         thread_form.setLabelAlignment(QtCore.Qt.AlignRight)
         thread_form.addRow("Thread line width (px):", self.in_width)
+        _set_tip(
+            thread_form,
+            self.in_width,
+            "Width of lines in the per-thread CPU view.",
+        )
+        self.in_smooth.setToolTip(
+            "Apply EMA smoothing to per-thread CPU graphs."
+        )
         thread_form.addRow(self.in_smooth)
+        self.in_extra.setToolTip(
+            "Apply a second EMA pass for even smoother CPU lines."
+        )
         thread_form.addRow(self.in_extra)
 
         general_group = QtWidgets.QGroupBox("General view")
@@ -2064,18 +2146,58 @@ class PreferencesDialog(QtWidgets.QDialog):
         general_form.setLabelAlignment(QtCore.Qt.AlignRight)
         # User-selectable color for the average CPU usage curve
         general_form.addRow("Curve color:", self.in_general_btn)
+        _set_tip(
+            general_form,
+            self.in_general_btn,
+            "Colour of the average CPU usage curve in the general view.",
+        )
 
         multi_group = QtWidgets.QGroupBox("Multi window")
         multi_form = QtWidgets.QFormLayout(multi_group)
         multi_form.setLabelAlignment(QtCore.Qt.AlignRight)
         multi_form.addRow("Mini plot min width (px):", self.in_mini_w)
+        _set_tip(
+            multi_form,
+            self.in_mini_w,
+            "Minimum width for each plot in multi-window mode.",
+        )
         multi_form.addRow("Mini plot min height (px):", self.in_mini_h)
+        _set_tip(
+            multi_form,
+            self.in_mini_h,
+            "Minimum height for each plot in multi-window mode.",
+        )
         multi_form.addRow("Multi-window columns:", self.in_multi_cols)
+        _set_tip(
+            multi_form,
+            self.in_multi_cols,
+            "Number of columns in the multi-window layout.",
+        )
+        self.in_multi_axes.setToolTip(
+            "Display axes on each multi-window plot."
+        )
         multi_form.addRow("Show axes in multi-window:", self.in_multi_axes)
         multi_form.addRow(self.in_mono_chk, self.in_mono_btn)
+        self.in_mono_chk.setToolTip(
+            "Use a single colour for all CPU plots in multi-window mode."
+        )
+        self.in_mono_btn.setToolTip("Choose the colour used when mono colour is enabled.")
         multi_form.addRow("CPU label placement:", self.in_label_mode)
+        _set_tip(
+            multi_form,
+            self.in_label_mode,
+            "Position of CPU labels within multi-window plots.",
+        )
         multi_form.addRow(self.in_label_match)
+        self.in_label_match.setToolTip(
+            "Automatically match CPU label colour to its plot colour."
+        )
         multi_form.addRow("CPU label color:", self.in_label_btn)
+        _set_tip(
+            multi_form,
+            self.in_label_btn,
+            "Custom colour for CPU labels when not matched to plot colour.",
+        )
 
         btns = QtWidgets.QDialogButtonBox(
             QtWidgets.QDialogButtonBox.Ok
