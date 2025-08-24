@@ -1920,21 +1920,39 @@ class FileSystemsTab(QtWidgets.QWidget):
     def refresh(self):
         # ----- Mounted partitions with progress bar -----
         try:
-            # Request partitions (include all on Linux, physical only on Windows)
-            parts = psutil.disk_partitions(all=not IS_WINDOWS)
+            # Request every partition on the system.  Using ``all=True`` is
+            # required on Windows so that removable drives (USB sticks, external
+            # HDDs, ... ) show up as well.  We'll filter the entries below.
+            parts = psutil.disk_partitions(all=True)
         except Exception:
             parts = []
 
-        # Ensure the current OS partition shows up
+        # Ensure the current OS partition shows up even if ``psutil`` did not
+        # report it.  On some systems the system drive/root may be omitted which
+        # would hide the main disk from the UI.
         if IS_WINDOWS:
             sys_drive = os.environ.get("SystemDrive", "C:")
             if not sys_drive.endswith("\\"):
                 sys_drive += "\\"
             if not any(p.mountpoint.lower() == sys_drive.lower() for p in parts):
-                parts.append(psutil._common.sdiskpart(device=sys_drive, mountpoint=sys_drive, fstype="unknown", opts=""))
+                parts.append(
+                    psutil._common.sdiskpart(
+                        device=sys_drive,
+                        mountpoint=sys_drive,
+                        fstype="unknown",
+                        opts="",
+                    )
+                )
         elif IS_LINUX:
             if not any(p.mountpoint == "/" for p in parts):
-                parts.append(psutil._common.sdiskpart(device="/", mountpoint="/", fstype="unknown", opts=""))
+                parts.append(
+                    psutil._common.sdiskpart(
+                        device="/",
+                        mountpoint="/",
+                        fstype="unknown",
+                        opts="",
+                    )
+                )
 
         self.mounts.setRowCount(0)
 
@@ -1950,21 +1968,30 @@ class FileSystemsTab(QtWidgets.QWidget):
             try:
                 usage = psutil.disk_usage(p.mountpoint)
             except Exception:
-                # Skip partitions that psutil cannot inspect
+                # Skip partitions that ``psutil`` cannot inspect
                 continue
 
-            # Ensure we have information for all columns
-            if not (p.mountpoint and p.fstype):
+            # ``psutil`` may return entries with missing information (e.g. empty
+            # ``fstype`` on some removable drives).  Accept those entries by
+            # substituting a placeholder type instead of discarding the whole
+            # partition.
+            if not p.mountpoint:
                 continue
+            fstype = p.fstype or "unknown"
             if usage.total <= 0:
                 continue
 
             prev = by_mount.get(p.mountpoint)
-            # Keep the partition with the largest capacity.  This
-            # guards against duplicate pseudo entries that may hide the
-            # actual root partition.
+            # Keep the partition with the largest capacity to avoid placeholder
+            # pseudo entries hiding the real one (common on Linux containers).
             if not prev or usage.total > prev[1].total:
-                by_mount[p.mountpoint] = (p, usage)
+                p_fixed = psutil._common.sdiskpart(
+                    device=p.device,
+                    mountpoint=p.mountpoint,
+                    fstype=fstype,
+                    opts=p.opts,
+                )
+                by_mount[p.mountpoint] = (p_fixed, usage)
 
         # Populate the table with the filtered/validated partitions
         for p, usage in by_mount.values():
