@@ -28,6 +28,7 @@ import psutil
 import platform
 import subprocess
 import threading
+import os
 from PyQt5 import QtWidgets, QtCore, QtGui
 import pyqtgraph as pg
 
@@ -1871,8 +1872,9 @@ class FileSystemsTab(QtWidgets.QWidget):
         self.mounts.setSelectionBehavior(QtWidgets.QAbstractItemView.SelectRows)
         self.mounts.verticalHeader().setVisible(False)
         self.mounts.setEditTriggers(QtWidgets.QAbstractItemView.NoEditTriggers)
-        for i, w in enumerate([180, 260, 90, 130, 130, 200]):
-            self.mounts.setColumnWidth(i, w)
+        header = self.mounts.horizontalHeader()
+        header.setSectionResizeMode(QtWidgets.QHeaderView.ResizeToContents)
+        header.setStretchLastSection(True)
 
         # --- Disk I/O table (as before) ---
         self.io_label = QtWidgets.QLabel("Disk I/O")
@@ -1885,8 +1887,9 @@ class FileSystemsTab(QtWidgets.QWidget):
         self.disks.setSelectionBehavior(QtWidgets.QAbstractItemView.SelectRows)
         self.disks.verticalHeader().setVisible(False)
         self.disks.setEditTriggers(QtWidgets.QAbstractItemView.NoEditTriggers)
-        for i, w in enumerate([120, 140, 140, 110, 110, 90, 90, 110]):
-            self.disks.setColumnWidth(i, w)
+        header = self.disks.horizontalHeader()
+        header.setSectionResizeMode(QtWidgets.QHeaderView.ResizeToContents)
+        header.setStretchLastSection(True)
 
         main.addWidget(self.mounts_label)
         main.addWidget(self.mounts)
@@ -1917,19 +1920,34 @@ class FileSystemsTab(QtWidgets.QWidget):
     def refresh(self):
         # ----- Mounted partitions with progress bar -----
         try:
-            # Request all partitions so external drives are included
-            parts = psutil.disk_partitions(all=True)
+            # Request partitions (include all on Linux, physical only on Windows)
+            parts = psutil.disk_partitions(all=not IS_WINDOWS)
         except Exception:
             parts = []
 
+        # Ensure the current OS partition shows up
+        if IS_WINDOWS:
+            sys_drive = os.environ.get("SystemDrive", "C:")
+            if not sys_drive.endswith("\\"):
+                sys_drive += "\\"
+            if not any(p.mountpoint.lower() == sys_drive.lower() for p in parts):
+                parts.append(psutil._common.sdiskpart(device=sys_drive, mountpoint=sys_drive, fstype="unknown", opts=""))
+        elif IS_LINUX:
+            if not any(p.mountpoint == "/" for p in parts):
+                parts.append(psutil._common.sdiskpart(device="/", mountpoint="/", fstype="unknown", opts=""))
+
         self.mounts.setRowCount(0)
+        seen = set()
         for p in parts:
+            if p.mountpoint in seen:
+                continue
+            seen.add(p.mountpoint)
             try:
                 usage = psutil.disk_usage(p.mountpoint)
             except Exception:
                 continue
             # Ensure we have information for all columns
-            if not (p.device and p.mountpoint and p.fstype):
+            if not (p.mountpoint and p.fstype):
                 continue
             if usage.total <= 0:
                 continue
@@ -1937,7 +1955,8 @@ class FileSystemsTab(QtWidgets.QWidget):
             row = self.mounts.rowCount()
             self.mounts.insertRow(row)
 
-            self.mounts.setItem(row, 0, QtWidgets.QTableWidgetItem(p.device))
+            dev = p.device if p.device else p.mountpoint
+            self.mounts.setItem(row, 0, QtWidgets.QTableWidgetItem(dev))
             self.mounts.setItem(row, 1, QtWidgets.QTableWidgetItem(p.mountpoint))
             self.mounts.setItem(row, 2, QtWidgets.QTableWidgetItem(p.fstype))
             self.mounts.setItem(row, 3, QtWidgets.QTableWidgetItem(human_bytes(usage.total)))
