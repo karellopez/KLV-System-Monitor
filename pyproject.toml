@@ -1,32 +1,66 @@
 [build-system]
-requires = ["setuptools>=61", "wheel"]
+requires = ["setuptools>=68", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "klv-system-monitor"
 version = "0.1.0"
-description = "Fancy system monitor for everyone"
-readme = "README.md"
-license = {file = "LICENSE"}
-authors = [{name = "Karel López Vilaret", email = "karel.mauricio.lopez.vilaret@uni-oldenburg.de"}]
-keywords = ["BIDS", "DICOM", "GUI", "Neuroimaging"]
-requires-python = ">=3.8"
-classifiers = [
-    "Development Status :: 3 - Alpha",
-    "Programming Language :: Python :: 3",
-    "Operating System :: OS Independent",
+description = "Cross-platform-ish system monitor (tested on Linux & Windows). Clean PyQt UI for CPU, memory, network and filesystems."
+readme = { file = "README.md", content-type = "text/markdown" }
+license = { file = "LICENSE" }
+authors = [
+  { name = "Karel López Vilaret", email = "karel.mauricio.lopez.vilaret@uni-oldenburg.de" }
 ]
-dependencies = [
-    "PyQt5",
-    "pyqtgraph",
-    "psutil"
+requires-python = ">=3.9"
+
+keywords = [
+  "system monitor", "monitoring", "psutil", "PyQt5", "pyqtgraph",
+  "CPU", "memory", "network", "filesystem", "Linux", "Windows"
 ]
 
-[project.scripts]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Environment :: X11 Applications :: Qt",
+  "Environment :: Win32 (MS Windows)",
+  "Intended Audience :: End Users/Desktop",
+  "Intended Audience :: Developers",
+  "License :: OSI Approved",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3 :: Only",
+  "Programming Language :: Python :: 3.9",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Topic :: Desktop Environment",
+  "Topic :: System :: Monitoring",
+  "Operating System :: POSIX :: Linux",
+  "Operating System :: Microsoft :: Windows",
+]
+
+dependencies = [
+  "PyQt5==5.15.11",
+  "pyqtgraph==0.13.7",
+  "psutil==7.0.0"
+]
+
+[project.optional-dependencies]
+gpu-nvidia = ["nvidia-ml-py3>=7.352.0"]
+dev = ["pytest", "mypy", "ruff", "black", "build", "twine"]
+
+[project.gui-scripts]
 klvtop = "klv_system_monitor.klv_system_monitor:main"
 
+[project.urls]
+Homepage = "https://github.com/karellopez/KLV-System-Monitor"
+Repository = "https://github.com/karellopez/KLV-System-Monitor"
+Issues = "https://github.com/karellopez/KLV-System-Monitor/issues"
+Changelog = "https://github.com/karellopez/KLV-System-Monitor/releases"
+"Author (LinkedIn)" = "https://www.linkedin.com/in/karel-l%C3%B3pez-vilaret/"
+
 [tool.setuptools]
-packages = ["klv_system_monitor"]
 include-package-data = true
 
-
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["klv_system_monitor*"]
+exclude = ["tests*", "docs*", "examples*"]
