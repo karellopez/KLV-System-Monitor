@@ -1940,17 +1940,26 @@ class FileSystemsTab(QtWidgets.QWidget):
         seen = set()
         for p in parts:
             if p.mountpoint in seen:
+                # Skip duplicates we've already recorded
                 continue
-            seen.add(p.mountpoint)
             try:
                 usage = psutil.disk_usage(p.mountpoint)
             except Exception:
+                # Skip partitions that psutil cannot inspect
                 continue
+
             # Ensure we have information for all columns
             if not (p.mountpoint and p.fstype):
                 continue
             if usage.total <= 0:
                 continue
+
+            # Mark as seen only after successful validation.  Some
+            # platforms (notably Linux and Windows) may report dummy
+            # entries for the same mount point before the real one. If
+            # we flagged the mount point as seen earlier we could miss
+            # the actual partition, such as the root "/".
+            seen.add(p.mountpoint)
 
             row = self.mounts.rowCount()
             self.mounts.insertRow(row)
