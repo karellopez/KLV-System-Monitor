@@ -5,12 +5,12 @@
 # New in this version:
 #   - Left Y axis with % labels (right axis hidden).
 #   - Click colored swatch in the CPU legend to choose a custom color per thread.
-#   - File Systems tab: "Used" shows a progress bar (like Ubuntu).
+#   - File Systems tab: percentage column shows a progress bar.
 #   - Preferences: antialiasing toggle, thread line width, toggle X/Y grid,
 #                  extra smoothing (double-EMA), and all previous knobs
 #                  (history, update cadences, EMA alphas, show per-CPU frequencies).
 #   - Separate plot vs text refresh intervals.
-#   - File Systems tab only lists active drives and refreshes on demand.
+#   - File Systems tab refreshes only when visible and its interval is configurable.
 #   - Processes tab refreshes only when visible and its interval is configurable.
 #   - Processes tab adds buttons to clear the selection and kill processes.
 #
@@ -1851,12 +1851,17 @@ class ProcessesTab(QtWidgets.QWidget):
 # ------------------------------- File Systems tab -------------------------------
 
 class FileSystemsTab(QtWidgets.QWidget):
+    """Display mounted partitions and per-disk I/O totals.
+
+    The table is periodically refreshed while the tab is visible.  When the
+    user switches to another tab the refresh timer is paused so that gathering
+    disk statistics does not waste resources in the background.  A configurable
+    refresh interval mirrors the behaviour of the Processes tab.
     """
-    Mounted file systems table:
-      - Device | Mount | Type | Total | Used | Free | %
-    Plus a second table with per-disk I/O counters (totals since boot).
-    Refreshed on demand when the tab becomes visible.
-    """
+
+    # Default refresh cadence (milliseconds)
+    UPDATE_MS = 3000
+
     def __init__(self, parent=None):
         super().__init__(parent)
         main = QtWidgets.QVBoxLayout(self)
@@ -1874,8 +1879,9 @@ class FileSystemsTab(QtWidgets.QWidget):
         self.mounts.setSelectionBehavior(QtWidgets.QAbstractItemView.SelectRows)
         self.mounts.verticalHeader().setVisible(False)
         self.mounts.setEditTriggers(QtWidgets.QAbstractItemView.NoEditTriggers)
+        # Allow the user to resize columns manually (previous behaviour)
         header = self.mounts.horizontalHeader()
-        header.setSectionResizeMode(QtWidgets.QHeaderView.ResizeToContents)
+        header.setSectionResizeMode(QtWidgets.QHeaderView.Interactive)
         header.setStretchLastSection(True)
 
         # --- Disk I/O table ---
@@ -1899,7 +1905,7 @@ class FileSystemsTab(QtWidgets.QWidget):
         self.disks.verticalHeader().setVisible(False)
         self.disks.setEditTriggers(QtWidgets.QAbstractItemView.NoEditTriggers)
         header = self.disks.horizontalHeader()
-        header.setSectionResizeMode(QtWidgets.QHeaderView.ResizeToContents)
+        header.setSectionResizeMode(QtWidgets.QHeaderView.Interactive)
         header.setStretchLastSection(True)
 
         main.addWidget(self.mounts_label)
@@ -1908,8 +1914,16 @@ class FileSystemsTab(QtWidgets.QWidget):
         main.addWidget(self.io_label)
         main.addWidget(self.disks)
 
-        # Populate once; refreshed again when tab is shown
+        # Timer used to refresh the tables when the tab is active
+        self.update_ms = self.UPDATE_MS
+        self.timer = QtCore.QTimer(self)
+        self.timer.timeout.connect(self.refresh)
+
+        # Populate once so the user sees something immediately
         self.refresh()
+        # Auto-fit columns initially but keep user sizes afterwards
+        self.mounts.resizeColumnsToContents()
+        self.disks.resizeColumnsToContents()
 
     def refresh(self):
         # ----- Mounted partitions -----
@@ -1923,10 +1937,28 @@ class FileSystemsTab(QtWidgets.QWidget):
             self.mounts.setItem(row, 0, QtWidgets.QTableWidgetItem(dev))
             self.mounts.setItem(row, 1, QtWidgets.QTableWidgetItem(mnt))
             self.mounts.setItem(row, 2, QtWidgets.QTableWidgetItem(fstype))
-            self.mounts.setItem(row, 3, QtWidgets.QTableWidgetItem(human_bytes(usage.total)))
-            self.mounts.setItem(row, 4, QtWidgets.QTableWidgetItem(human_bytes(usage.used)))
-            self.mounts.setItem(row, 5, QtWidgets.QTableWidgetItem(human_bytes(usage.free)))
-            self.mounts.setItem(row, 6, QtWidgets.QTableWidgetItem(f"{usage.percent:.1f}"))
+            self.mounts.setItem(
+                row, 3, QtWidgets.QTableWidgetItem(human_bytes(usage.total))
+            )
+            self.mounts.setItem(
+                row, 4, QtWidgets.QTableWidgetItem(human_bytes(usage.used))
+            )
+            self.mounts.setItem(
+                row, 5, QtWidgets.QTableWidgetItem(human_bytes(usage.free))
+            )
+
+            # Progress bar in the percentage column for an at-a-glance view of
+            # disk usage.  We still keep a hidden QTableWidgetItem so that
+            # sorting remains numeric rather than lexical.
+            percent_item = QtWidgets.QTableWidgetItem(f"{usage.percent:.1f}")
+            percent_item.setData(QtCore.Qt.UserRole, usage.percent)
+            self.mounts.setItem(row, 6, percent_item)
+            bar = QtWidgets.QProgressBar()
+            bar.setRange(0, 100)
+            bar.setValue(int(round(usage.percent)))
+            bar.setFormat(f"{usage.percent:.1f}%")
+            bar.setAlignment(QtCore.Qt.AlignCenter)
+            self.mounts.setCellWidget(row, 6, bar)
 
         # ----- Per-disk I/O totals -----
         io_per = disk_io_counters()
@@ -1945,8 +1977,21 @@ class FileSystemsTab(QtWidgets.QWidget):
             self.disks.setItem(row, 7, QtWidgets.QTableWidgetItem(str(busy) if busy is not None else "-"))
 
     def showEvent(self, e: QtGui.QShowEvent):
+        """Start refreshing when the tab becomes visible."""
         self.refresh()
+        self.timer.start(self.update_ms)
         super().showEvent(e)
+
+    def hideEvent(self, e: QtGui.QHideEvent):
+        """Pause updates when the tab is hidden."""
+        self.timer.stop()
+        super().hideEvent(e)
+
+    def set_update_ms(self, ms: int) -> None:
+        """Adjust refresh interval for the file system information."""
+        self.update_ms = max(50, int(ms))
+        if self.timer.isActive():
+            self.timer.start(self.update_ms)
 
 
 # ------------------------------- Preferences dialog -------------------------------
@@ -1958,6 +2003,7 @@ class PreferencesDialog(QtWidgets.QDialog):
       - Plot update interval (ms)  [graphs]
       - Text update interval (ms) [legend numbers & labels]
       - Processes refresh interval (ms)
+      - File systems refresh interval (ms)
       - CPU EMA alpha
       - Memory EMA alpha
       - Network EMA alpha
@@ -1978,6 +2024,7 @@ class PreferencesDialog(QtWidgets.QDialog):
         self,
         resources_tab: ResourcesTab,
         processes_tab: ProcessesTab,
+        filesystems_tab: FileSystemsTab,
         themes: Dict[str, QtGui.QPalette],
         current_theme: str,
         parent=None,
@@ -1986,6 +2033,7 @@ class PreferencesDialog(QtWidgets.QDialog):
         self.setWindowTitle("Preferences")
         self.resources_tab = resources_tab
         self.processes_tab = processes_tab
+        self.filesystems_tab = filesystems_tab
         self.themes = themes
 
         def _set_tip(
@@ -2021,6 +2069,11 @@ class PreferencesDialog(QtWidgets.QDialog):
         self.in_proc.setRange(50, 10000)
         self.in_proc.setSingleStep(50)
         self.in_proc.setValue(processes_tab.update_ms)
+
+        self.in_fs = QtWidgets.QSpinBox()
+        self.in_fs.setRange(50, 10000)
+        self.in_fs.setSingleStep(50)
+        self.in_fs.setValue(filesystems_tab.update_ms)
 
         self.in_ema = QtWidgets.QDoubleSpinBox()
         self.in_ema.setDecimals(3)
@@ -2161,6 +2214,12 @@ class PreferencesDialog(QtWidgets.QDialog):
             global_form,
             self.in_proc,
             "Update frequency for the process list.",
+        )
+        global_form.addRow("File systems refresh interval (ms):", self.in_fs)
+        _set_tip(
+            global_form,
+            self.in_fs,
+            "Update frequency for mounted partitions and disk I/O tables.",
         )
         global_form.addRow("CPU EMA alpha (0–0.999):", self.in_ema)
         _set_tip(
@@ -2358,6 +2417,7 @@ class PreferencesDialog(QtWidgets.QDialog):
             int(self.in_plot.value()),
             int(self.in_text.value()),
             int(self.in_proc.value()),
+            int(self.in_fs.value()),
             float(self.in_ema.value()),
             float(self.in_mem_ema.value()),
             float(self.in_net_ema.value()),
@@ -2391,6 +2451,7 @@ class PreferencesDialog(QtWidgets.QDialog):
             plot_ms,
             text_ms,
             proc_ms,
+            fs_ms,
             ema,
             mem_ema,
             net_ema,
@@ -2447,6 +2508,7 @@ class PreferencesDialog(QtWidgets.QDialog):
             label_color=label_color,
         )
         self.processes_tab.set_update_ms(proc_ms)
+        self.filesystems_tab.set_update_ms(fs_ms)
         parent = self.parent()
         if parent is not None and hasattr(parent, "save_preferences"):
             parent.save_preferences(
@@ -2455,6 +2517,7 @@ class PreferencesDialog(QtWidgets.QDialog):
                     "plot_update_ms": plot_ms,
                     "text_update_ms": text_ms,
                     "proc_update_ms": proc_ms,
+                    "fs_update_ms": fs_ms,
                     "ema_alpha": ema,
                     "mem_ema_alpha": mem_ema,
                     "net_ema_alpha": net_ema,
@@ -2493,6 +2556,7 @@ class PreferencesDialog(QtWidgets.QDialog):
         self.in_plot.setValue(ResourcesTab.PLOT_UPDATE_MS)
         self.in_text.setValue(ResourcesTab.TEXT_UPDATE_MS)
         self.in_proc.setValue(ProcessesTab.UPDATE_MS)
+        self.in_fs.setValue(FileSystemsTab.UPDATE_MS)
         self.in_ema.setValue(ResourcesTab.EMA_ALPHA)
         self.in_mem_ema.setValue(ResourcesTab.MEM_EMA_ALPHA)
         self.in_net_ema.setValue(ResourcesTab.NET_EMA_ALPHA)
@@ -2586,6 +2650,7 @@ class MainWindow(QtWidgets.QMainWindow):
         dlg = PreferencesDialog(
             self.resources_tab,
             self.processes_tab,
+            self.filesystems_tab,
             self.themes,
             self.current_theme,
             self,
@@ -2655,6 +2720,9 @@ class MainWindow(QtWidgets.QMainWindow):
             )
             self.processes_tab.set_update_ms(
                 data.get("proc_update_ms", self.processes_tab.UPDATE_MS)
+            )
+            self.filesystems_tab.set_update_ms(
+                data.get("fs_update_ms", self.filesystems_tab.UPDATE_MS)
             )
 
     def save_preferences(self, data: Dict[str, object]):
