@@ -2616,12 +2616,93 @@ class PreferencesDialog(QtWidgets.QDialog):
         self.apply()
 
 
+# ------------------------------- About dialog -------------------------------
+
+class AboutDialog(QtWidgets.QDialog):
+    """Simple scrollable dialog showing project information."""
+
+    def __init__(self, parent: Optional[QtWidgets.QWidget] = None) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("About KLV System Monitor")
+        self.resize(500, 600)
+
+        # Scroll area allows the text and images to exceed the dialog size.
+        scroll = QtWidgets.QScrollArea(self)
+        scroll.setWidgetResizable(True)
+
+        content = QtWidgets.QWidget()
+        vbox = QtWidgets.QVBoxLayout(content)
+        vbox.setAlignment(QtCore.Qt.AlignTop)
+
+        base_path = Path(__file__).resolve().parent / "miscellaneous" / "images"
+
+        # Centered project logo.
+        logo_lbl = QtWidgets.QLabel()
+        logo_pix = QtGui.QPixmap(str(base_path / "icon.png"))
+        logo_lbl.setPixmap(logo_pix)
+        logo_lbl.setAlignment(QtCore.Qt.AlignCenter)
+        vbox.addWidget(logo_lbl)
+
+        # Author photograph.
+        photo_lbl = QtWidgets.QLabel()
+        photo_pix = QtGui.QPixmap(str(base_path / "Karel.jpeg"))
+        photo_lbl.setPixmap(photo_pix)
+        photo_lbl.setAlignment(QtCore.Qt.AlignCenter)
+        vbox.addWidget(photo_lbl)
+
+        # Descriptive text including links. ``openExternalLinks`` makes URLs clickable.
+        text = (
+            "This software has been developed with the objective of providing a "
+            "lightweight, efficient, and cross-platform solution for system monitoring.\n"
+            "KLV System Monitor enables users to keep track of CPU, memory, network, and "
+            "filesystem usage in real time, with a focus on clarity, responsiveness, and "
+            "extensibility. The intention is to create a tool that is both useful for "
+            "everyday users and robust enough for developers and researchers who require "
+            "precise resource tracking.\n\n"
+            "The project is inspired by GNOME System Monitor, adapting its clarity and "
+            "usability into a cross-platform environment. Since no comparable alternative "
+            "existed for Windows or other systems, KLV System Monitor was designed to fill "
+            "this gap.\n\n"
+            "Author\n\n"
+            "Dr. Karel López Vilaret\n"
+            "KLV System Monitor Lead Developer\n\n"
+            "I hold a PhD in Neuroscience and currently work as a scientific software "
+            "developer. My research has always been closely tied to computational "
+            "optimization, parallelization, and high-performance data analysis.\n"
+            "Building on this experience, I created KLV System Monitor as a personal "
+            "project to bring the same principles of efficiency and clarity into a system "
+            "monitoring tool—combining performance insights with an intuitive interface.\n\n"
+            "Connect with me\n\n"
+            "<a href=\"https://www.linkedin.com/in/karel-l%C3%B3pez-vilaret/\">"
+            "https://www.linkedin.com/in/karel-l%C3%B3pez-vilaret/</a> \n\n"
+            "<a href=\"https://github.com/karellopez/KLV-System-Monitor\">"
+            "https://github.com/karellopez/KLV-System-Monitor</a>"
+        )
+        text_lbl = QtWidgets.QLabel(text)
+        text_lbl.setWordWrap(True)
+        text_lbl.setOpenExternalLinks(True)
+        vbox.addWidget(text_lbl)
+
+        scroll.setWidget(content)
+
+        layout = QtWidgets.QVBoxLayout(self)
+        layout.addWidget(scroll)
+
+        close_btn = QtWidgets.QPushButton("Close")
+        close_btn.clicked.connect(self.accept)
+        layout.addWidget(close_btn)
+
 # ------------------------------- Main window -------------------------------
 
 class MainWindow(QtWidgets.QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("KLV System Monitor")
+        # Load and apply the application icon so it shows in the window title
+        # bar and in the taskbar/dock.  The icon lives inside the package so we
+        # build its path relative to this file.
+        icon_path = Path(__file__).resolve().parent / "miscellaneous" / "images" / "icon.png"
+        self.setWindowIcon(QtGui.QIcon(str(icon_path)))
         self.resize(860, 950)
 
         # Centered tabs
@@ -2643,9 +2724,13 @@ class MainWindow(QtWidgets.QMainWindow):
         v.setContentsMargins(6, 6, 6, 6)
         v.addWidget(self.tabs)
 
-        # Preferences button in the lower right corner
+        # About / Preferences buttons in the lower right corner
         btn_layout = QtWidgets.QHBoxLayout()
         btn_layout.addStretch(1)
+        # About button shows information about the application and its author
+        self.about_btn = QtWidgets.QPushButton("About")
+        self.about_btn.clicked.connect(self.open_about)
+        btn_layout.addWidget(self.about_btn)
         self.pref_btn = QtWidgets.QPushButton("Preferences")
         self.pref_btn.clicked.connect(self.open_preferences)
         btn_layout.addWidget(self.pref_btn)
@@ -2684,6 +2769,11 @@ class MainWindow(QtWidgets.QMainWindow):
             self.current_theme,
             self,
         )
+        dlg.exec_()
+
+    def open_about(self):
+        """Show the About dialog with project and author information."""
+        dlg = AboutDialog(self)
         dlg.exec_()
 
     def _on_tab_changed(self, index: int) -> None:
@@ -2778,6 +2868,11 @@ class MainWindow(QtWidgets.QMainWindow):
 def main():
     app = QtWidgets.QApplication(sys.argv)
     app.setStyle("Fusion")
+
+    # Apply the application icon so it appears in the taskbar/dock.
+    icon_path = Path(__file__).resolve().parent / "miscellaneous" / "images" / "icon.png"
+    app.setWindowIcon(QtGui.QIcon(str(icon_path)))
+
     w = MainWindow()
     w.show()
     sys.exit(app.exec_())
