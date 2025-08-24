@@ -60,6 +60,93 @@ def human_rate_kib(n_kib_s: float) -> str:
     n = float(n_kib_s)
     return (f"{n/1024.0:,.2f} MiB/s" if n >= 1024 else f"{n:,.1f} KiB/s").replace(",", " ")
 
+
+def safe_disk_partitions() -> List[Tuple[psutil._common.sdiskpart, psutil._common.sdiskusage]]:
+    """Return mounted partitions with usage info, filtering unsafe entries.
+
+    The function mirrors the behaviour of the stand-alone ``list_disks.py``
+    helper script provided by the user.  It filters optical drives and
+    removable volumes without media on Windows and ignores mount points that
+    cannot be accessed.  Only partitions that successfully report usage data
+    are returned so the GUI never attempts to display bogus or incomplete
+    devices.
+    """
+
+    parts: List[Tuple[psutil._common.sdiskpart, psutil._common.sdiskusage]] = []
+    is_win = sys.platform.startswith("win")
+
+    try:
+        p_list = psutil.disk_partitions(all=False)
+    except Exception:
+        p_list = []
+
+    for p in p_list:
+        if is_win:
+            opts = (p.opts or "").lower()
+            # Skip optical drives and removable drives without media
+            if "cdrom" in opts:
+                continue
+            if "removable" in opts and not p.fstype:
+                continue
+            if not p.fstype:
+                continue
+
+        # Ignore stale or inaccessible mount points
+        if not os.path.exists(p.mountpoint):
+            continue
+
+        try:
+            usage = psutil.disk_usage(p.mountpoint)
+        except (PermissionError, OSError):
+            continue
+        except Exception:
+            continue
+
+        parts.append((p, usage))
+
+    # Ensure the main system partition shows up even if psutil omitted it
+    if IS_WINDOWS:
+        sys_drive = os.environ.get("SystemDrive", "C:")
+        if not sys_drive.endswith("\\"):
+            sys_drive += "\\"
+        if not any(p.mountpoint.lower() == sys_drive.lower() for p, _ in parts):
+            try:
+                usage = psutil.disk_usage(sys_drive)
+            except Exception:
+                pass
+            else:
+                parts.append(
+                    (
+                        psutil._common.sdiskpart(
+                            device=sys_drive,
+                            mountpoint=sys_drive,
+                            fstype="unknown",
+                            opts="",
+                        ),
+                        usage,
+                    )
+                )
+    elif IS_LINUX:
+        if not any(p.mountpoint == "/" for p, _ in parts):
+            try:
+                usage = psutil.disk_usage("/")
+            except Exception:
+                pass
+            else:
+                parts.append(
+                    (
+                        psutil._common.sdiskpart(
+                            device="/",
+                            mountpoint="/",
+                            fstype="unknown",
+                            opts="",
+                        ),
+                        usage,
+                    )
+                )
+
+    return parts
+
 def human_freq(mhz: Optional[float]) -> str:
     """Format frequency in MHz as MHz/GHz with sensible precision."""
     if mhz is None or mhz <= 0:
@@ -1919,68 +2006,21 @@ class FileSystemsTab(QtWidgets.QWidget):
 
     def refresh(self):
         # ----- Mounted partitions with progress bar -----
-        try:
-            # Request every partition on the system.  Using ``all=True`` is
-            # required on Windows so that removable drives (USB sticks, external
-            # HDDs, ... ) show up as well.  We'll filter the entries below.
-            parts = psutil.disk_partitions(all=True)
-        except Exception:
-            parts = []
-
-        # Ensure the current OS partition shows up even if ``psutil`` did not
-        # report it.  On some systems the system drive/root may be omitted which
-        # would hide the main disk from the UI.
-        if IS_WINDOWS:
-            sys_drive = os.environ.get("SystemDrive", "C:")
-            if not sys_drive.endswith("\\"):
-                sys_drive += "\\"
-            if not any(p.mountpoint.lower() == sys_drive.lower() for p in parts):
-                parts.append(
-                    psutil._common.sdiskpart(
-                        device=sys_drive,
-                        mountpoint=sys_drive,
-                        fstype="unknown",
-                        opts="",
-                    )
-                )
-        elif IS_LINUX:
-            if not any(p.mountpoint == "/" for p in parts):
-                parts.append(
-                    psutil._common.sdiskpart(
-                        device="/",
-                        mountpoint="/",
-                        fstype="unknown",
-                        opts="",
-                    )
-                )
-
+        parts = safe_disk_partitions()
         self.mounts.setRowCount(0)
 
-        # Collect valid partitions keyed by their mount point.  Some
-        # platforms (notably Linux containers) may report the same
-        # mount point multiple times with placeholder entries that have
-        # no size information.  We keep the entry with the largest
-        # total size for each mount point which ensures that a later,
-        # "real" partition such as the root "/" overrides any earlier
-        # dummy one.
+        # Collect valid partitions keyed by their mount point.  Some platforms
+        # (notably Linux containers) may report the same mount point multiple
+        # times with placeholder entries that have no size information.  We keep
+        # the entry with the largest total size for each mount point which
+        # ensures that a later, "real" partition such as the root "/" overrides
+        # any earlier dummy one.
         by_mount: Dict[str, Tuple[psutil._common.sdiskpart, psutil._common.sdiskusage]] = {}
-        for p in parts:
-            try:
-                usage = psutil.disk_usage(p.mountpoint)
-            except Exception:
-                # Skip partitions that ``psutil`` cannot inspect
+        for p, usage in parts:
+            if not p.mountpoint or usage.total <= 0:
                 continue
 
-            # ``psutil`` may return entries with missing information (e.g. empty
-            # ``fstype`` on some removable drives).  Accept those entries by
-            # substituting a placeholder type instead of discarding the whole
-            # partition.
-            if not p.mountpoint:
-                continue
             fstype = p.fstype or "unknown"
-            if usage.total <= 0:
-                continue
-
             prev = by_mount.get(p.mountpoint)
             # Keep the partition with the largest capacity to avoid placeholder
             # pseudo entries hiding the real one (common on Linux containers).
