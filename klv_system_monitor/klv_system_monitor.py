@@ -2624,7 +2624,7 @@ class AboutDialog(QtWidgets.QDialog):
     def __init__(self, parent: Optional[QtWidgets.QWidget] = None) -> None:
         super().__init__(parent)
         self.setWindowTitle("About KLV System Monitor")
-        self.resize(500, 600)
+        self.resize(420, 600)
 
         # Scroll area allows the text and images to exceed the dialog size.
         scroll = QtWidgets.QScrollArea(self)
@@ -2636,22 +2636,26 @@ class AboutDialog(QtWidgets.QDialog):
 
         base_path = Path(__file__).resolve().parent / "miscellaneous" / "images"
 
-        # Centered project logo.
+        # Project logo at the top
         logo_lbl = QtWidgets.QLabel()
         logo_pix = QtGui.QPixmap(str(base_path / "icon.png"))
-        logo_lbl.setPixmap(logo_pix)
+        if not logo_pix.isNull():
+            logo_pix = logo_pix.scaled(128, 128, QtCore.Qt.KeepAspectRatio, QtCore.Qt.SmoothTransformation)
+            logo_lbl.setPixmap(logo_pix)
         logo_lbl.setAlignment(QtCore.Qt.AlignCenter)
         vbox.addWidget(logo_lbl)
 
-        # Author photograph.
-        photo_lbl = QtWidgets.QLabel()
-        photo_pix = QtGui.QPixmap(str(base_path / "Karel.jpeg"))
-        photo_lbl.setPixmap(photo_pix)
-        photo_lbl.setAlignment(QtCore.Qt.AlignCenter)
-        vbox.addWidget(photo_lbl)
+        # Title under the logo
+        title_lbl = QtWidgets.QLabel("KLV System Monitor")
+        title_font = title_lbl.font()
+        title_font.setPointSize(14)
+        title_font.setBold(True)
+        title_lbl.setFont(title_font)
+        title_lbl.setAlignment(QtCore.Qt.AlignCenter)
+        vbox.addWidget(title_lbl)
 
-        # Descriptive text including links. ``openExternalLinks`` makes URLs clickable.
-        text = (
+        # Project description
+        desc = (
             "This software has been developed with the objective of providing a "
             "lightweight, efficient, and cross-platform solution for system monitoring.\n"
             "KLV System Monitor enables users to keep track of CPU, memory, network, and "
@@ -2662,26 +2666,67 @@ class AboutDialog(QtWidgets.QDialog):
             "The project is inspired by GNOME System Monitor, adapting its clarity and "
             "usability into a cross-platform environment. Since no comparable alternative "
             "existed for Windows or other systems, KLV System Monitor was designed to fill "
-            "this gap.\n\n"
-            "Author\n\n"
-            "Dr. Karel López Vilaret\n"
-            "KLV System Monitor Lead Developer\n\n"
+            "this gap."
+        )
+        desc_lbl = QtWidgets.QLabel(desc)
+        desc_lbl.setWordWrap(True)
+        vbox.addWidget(desc_lbl)
+
+        # Author photograph
+        photo_lbl = QtWidgets.QLabel()
+        photo_pix = QtGui.QPixmap(str(base_path / "Karel.jpeg"))
+        if not photo_pix.isNull():
+            photo_pix = photo_pix.scaled(200, 200, QtCore.Qt.KeepAspectRatio, QtCore.Qt.SmoothTransformation)
+            photo_lbl.setPixmap(photo_pix)
+        photo_lbl.setAlignment(QtCore.Qt.AlignCenter)
+        vbox.addWidget(photo_lbl)
+
+        # Author heading and name/role
+        author_hdr = QtWidgets.QLabel("Author")
+        author_font = author_hdr.font()
+        author_font.setBold(True)
+        author_hdr.setFont(author_font)
+        author_hdr.setAlignment(QtCore.Qt.AlignCenter)
+        vbox.addWidget(author_hdr)
+
+        name_lbl = QtWidgets.QLabel("Dr. Karel López Vilaret\nKLV System Monitor Lead Developer")
+        name_lbl.setAlignment(QtCore.Qt.AlignCenter)
+        vbox.addWidget(name_lbl)
+
+        # Author biography
+        bio = (
             "I hold a PhD in Neuroscience and currently work as a scientific software "
             "developer. My research has always been closely tied to computational "
             "optimization, parallelization, and high-performance data analysis.\n"
             "Building on this experience, I created KLV System Monitor as a personal "
             "project to bring the same principles of efficiency and clarity into a system "
-            "monitoring tool—combining performance insights with an intuitive interface.\n\n"
-            "Connect with me\n\n"
-            "<a href=\"https://www.linkedin.com/in/karel-l%C3%B3pez-vilaret/\">"
-            "https://www.linkedin.com/in/karel-l%C3%B3pez-vilaret/</a> \n\n"
-            "<a href=\"https://github.com/karellopez/KLV-System-Monitor\">"
-            "https://github.com/karellopez/KLV-System-Monitor</a>"
+            "monitoring tool—combining performance insights with an intuitive interface."
         )
-        text_lbl = QtWidgets.QLabel(text)
-        text_lbl.setWordWrap(True)
-        text_lbl.setOpenExternalLinks(True)
-        vbox.addWidget(text_lbl)
+        bio_lbl = QtWidgets.QLabel(bio)
+        bio_lbl.setWordWrap(True)
+        vbox.addWidget(bio_lbl)
+
+        # Connect links
+        connect_hdr = QtWidgets.QLabel("Connect with me")
+        connect_font = connect_hdr.font()
+        connect_font.setBold(True)
+        connect_hdr.setFont(connect_font)
+        connect_hdr.setAlignment(QtCore.Qt.AlignCenter)
+        vbox.addWidget(connect_hdr)
+
+        linkedin_lbl = QtWidgets.QLabel(
+            '🔗 <a href="https://www.linkedin.com/in/karel-l%C3%B3pez-vilaret/">LinkedIn</a>'
+        )
+        linkedin_lbl.setAlignment(QtCore.Qt.AlignCenter)
+        linkedin_lbl.setOpenExternalLinks(True)
+        vbox.addWidget(linkedin_lbl)
+
+        github_lbl = QtWidgets.QLabel(
+            '💻 <a href="https://github.com/karellopez/KLV-System-Monitor">GitHub</a>'
+        )
+        github_lbl.setAlignment(QtCore.Qt.AlignCenter)
+        github_lbl.setOpenExternalLinks(True)
+        vbox.addWidget(github_lbl)
 
         scroll.setWidget(content)
 
