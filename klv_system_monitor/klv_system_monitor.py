@@ -2911,10 +2911,20 @@ class MainWindow(QtWidgets.QMainWindow):
 
 
 def main():
+    # On Windows, set an explicit AppUserModelID so the custom application icon
+    # is used in the taskbar instead of the default python.exe icon.
+    if sys.platform.startswith("win"):
+        import ctypes
+
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(
+            "klv.system.monitor"
+        )
+
     app = QtWidgets.QApplication(sys.argv)
     app.setStyle("Fusion")
 
-    # Apply the application icon so it appears in the taskbar/dock.
+    # Apply the application icon so it appears in the window title bar and the
+    # taskbar/dock.
     icon_path = Path(__file__).resolve().parent / "miscellaneous" / "images" / "icon.png"
     app.setWindowIcon(QtGui.QIcon(str(icon_path)))
 
