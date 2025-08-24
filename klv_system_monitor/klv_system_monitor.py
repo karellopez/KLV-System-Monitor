@@ -1926,9 +1926,19 @@ class FileSystemsTab(QtWidgets.QWidget):
         self.disks.resizeColumnsToContents()
 
     def refresh(self):
+        # Preserve current sort and scroll position so that refreshing does not
+        # disturb the user's view.  Sorting is temporarily disabled while the
+        # tables are rebuilt to prevent rows from jumping around or cell
+        # widgets (progress bars) from being dropped.
+
         # ----- Mounted partitions -----
-        parts = safe_partitions()
+        m_header = self.mounts.horizontalHeader()
+        m_sort_col = m_header.sortIndicatorSection()
+        m_sort_order = m_header.sortIndicatorOrder()
+        m_scroll = self.mounts.verticalScrollBar().value()
+        self.mounts.setSortingEnabled(False)
         self.mounts.setRowCount(0)
+        parts = safe_partitions()
         for dev, mnt, fstype, usage in parts:
             if usage is None:
                 continue
@@ -1960,9 +1970,18 @@ class FileSystemsTab(QtWidgets.QWidget):
             bar.setAlignment(QtCore.Qt.AlignCenter)
             self.mounts.setCellWidget(row, 6, bar)
 
+        self.mounts.setSortingEnabled(True)
+        self.mounts.sortItems(m_sort_col, m_sort_order)
+        self.mounts.verticalScrollBar().setValue(m_scroll)
+
         # ----- Per-disk I/O totals -----
-        io_per = disk_io_counters()
+        d_header = self.disks.horizontalHeader()
+        d_sort_col = d_header.sortIndicatorSection()
+        d_sort_order = d_header.sortIndicatorOrder()
+        d_scroll = self.disks.verticalScrollBar().value()
+        self.disks.setSortingEnabled(False)
         self.disks.setRowCount(0)
+        io_per = disk_io_counters()
         for disk, io in io_per.items():
             row = self.disks.rowCount()
             self.disks.insertRow(row)
@@ -1975,6 +1994,10 @@ class FileSystemsTab(QtWidgets.QWidget):
             self.disks.setItem(row, 6, QtWidgets.QTableWidgetItem(str(getattr(io, 'write_time', 0))))
             busy = getattr(io, 'busy_time', None)
             self.disks.setItem(row, 7, QtWidgets.QTableWidgetItem(str(busy) if busy is not None else "-"))
+
+        self.disks.setSortingEnabled(True)
+        self.disks.sortItems(d_sort_col, d_sort_order)
+        self.disks.verticalScrollBar().setValue(d_scroll)
 
     def showEvent(self, e: QtGui.QShowEvent):
         """Start refreshing when the tab becomes visible."""
@@ -2610,6 +2633,9 @@ class MainWindow(QtWidgets.QMainWindow):
         self.tabs.addTab(self.resources_tab,  "Resources")
         self.tabs.addTab(self.processes_tab,  "Processes")
         self.tabs.addTab(self.filesystems_tab,"File Systems")
+        # Track tab changes so that timers for the Processes and File Systems
+        # views only run while their tab is visible.
+        self.tabs.currentChanged.connect(self._on_tab_changed)
 
         # Put centered tabs into the main area
         container = QtWidgets.QWidget()
@@ -2645,6 +2671,9 @@ class MainWindow(QtWidgets.QMainWindow):
                 pass
         self.apply_theme(default_theme)
         self._load_preferences()
+        # Ensure only the active tab (Resources by default) has its refresh
+        # timers running at startup.
+        self._on_tab_changed(self.tabs.currentIndex())
 
     def open_preferences(self):
         dlg = PreferencesDialog(
@@ -2656,6 +2685,20 @@ class MainWindow(QtWidgets.QMainWindow):
             self,
         )
         dlg.exec_()
+
+    def _on_tab_changed(self, index: int) -> None:
+        """Start or stop refresh timers when tabs are switched."""
+        if index == 1:  # Processes tab
+            self.processes_tab.refresh()
+            self.processes_tab.timer.start(self.processes_tab.update_ms)
+            self.filesystems_tab.timer.stop()
+        elif index == 2:  # File Systems tab
+            self.filesystems_tab.refresh()
+            self.filesystems_tab.timer.start(self.filesystems_tab.update_ms)
+            self.processes_tab.timer.stop()
+        else:  # Resources tab
+            self.processes_tab.timer.stop()
+            self.filesystems_tab.timer.stop()
 
     def apply_theme(self, name: str):
         app = QtWidgets.QApplication.instance()
