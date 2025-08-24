@@ -1937,11 +1937,16 @@ class FileSystemsTab(QtWidgets.QWidget):
                 parts.append(psutil._common.sdiskpart(device="/", mountpoint="/", fstype="unknown", opts=""))
 
         self.mounts.setRowCount(0)
-        seen = set()
+
+        # Collect valid partitions keyed by their mount point.  Some
+        # platforms (notably Linux containers) may report the same
+        # mount point multiple times with placeholder entries that have
+        # no size information.  We keep the entry with the largest
+        # total size for each mount point which ensures that a later,
+        # "real" partition such as the root "/" overrides any earlier
+        # dummy one.
+        by_mount: Dict[str, Tuple[psutil._common.sdiskpart, psutil._common.sdiskusage]] = {}
         for p in parts:
-            if p.mountpoint in seen:
-                # Skip duplicates we've already recorded
-                continue
             try:
                 usage = psutil.disk_usage(p.mountpoint)
             except Exception:
@@ -1954,13 +1959,15 @@ class FileSystemsTab(QtWidgets.QWidget):
             if usage.total <= 0:
                 continue
 
-            # Mark as seen only after successful validation.  Some
-            # platforms (notably Linux and Windows) may report dummy
-            # entries for the same mount point before the real one. If
-            # we flagged the mount point as seen earlier we could miss
-            # the actual partition, such as the root "/".
-            seen.add(p.mountpoint)
+            prev = by_mount.get(p.mountpoint)
+            # Keep the partition with the largest capacity.  This
+            # guards against duplicate pseudo entries that may hide the
+            # actual root partition.
+            if not prev or usage.total > prev[1].total:
+                by_mount[p.mountpoint] = (p, usage)
 
+        # Populate the table with the filtered/validated partitions
+        for p, usage in by_mount.values():
             row = self.mounts.rowCount()
             self.mounts.insertRow(row)
 
