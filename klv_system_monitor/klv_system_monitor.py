@@ -32,6 +32,8 @@ import os
 from PyQt5 import QtWidgets, QtCore, QtGui
 import pyqtgraph as pg
 
+from .list_disks import safe_partitions, disk_io_counters
+
 # Directory used to store persistent user preferences
 PREF_DIR = Path(__file__).resolve().parent / "user_preferences"
 
@@ -1850,9 +1852,9 @@ class ProcessesTab(QtWidgets.QWidget):
 
 class FileSystemsTab(QtWidgets.QWidget):
     """
-    Mounted file systems table (like Ubuntu):
-      - Device | Directory | Type | Total | Available | Used (with progress bar)
-    Plus a second table with per-disk I/O totals and rates.
+    Mounted file systems table:
+      - Device | Mount | Type | Total | Used | Free | %
+    Plus a second table with per-disk I/O counters (totals since boot).
     Refreshed on demand when the tab becomes visible.
     """
     def __init__(self, parent=None):
@@ -1861,12 +1863,12 @@ class FileSystemsTab(QtWidgets.QWidget):
         main.setContentsMargins(10, 10, 10, 10)
         main.setSpacing(12)
 
-        # --- Mounted file systems (progress bar in "Used") ---
+        # --- Mounted file systems ---
         self.mounts_label = QtWidgets.QLabel("Mounted File Systems")
         self.mounts_label.setStyleSheet("font-weight:bold;")
-        self.mounts = QtWidgets.QTableWidget(0, 6)
+        self.mounts = QtWidgets.QTableWidget(0, 7)
         self.mounts.setHorizontalHeaderLabels(
-            ["Device", "Directory", "Type", "Total", "Available", "Used"]
+            ["Device", "Mount", "Type", "Total", "Used", "Free", "%"]
         )
         self.mounts.setSortingEnabled(True)
         self.mounts.setSelectionBehavior(QtWidgets.QAbstractItemView.SelectRows)
@@ -1876,12 +1878,21 @@ class FileSystemsTab(QtWidgets.QWidget):
         header.setSectionResizeMode(QtWidgets.QHeaderView.ResizeToContents)
         header.setStretchLastSection(True)
 
-        # --- Disk I/O table (as before) ---
+        # --- Disk I/O table ---
         self.io_label = QtWidgets.QLabel("Disk I/O")
         self.io_label.setStyleSheet("font-weight:bold;")
         self.disks = QtWidgets.QTableWidget(0, 8)
         self.disks.setHorizontalHeaderLabels(
-            ["Disk", "Read total", "Write total", "Read/s", "Write/s", "Reads", "Writes", "Busy time"]
+            [
+                "Disk",
+                "Reads",
+                "Writes",
+                "Read bytes",
+                "Write bytes",
+                "Read time ms",
+                "Write time ms",
+                "Busy ms",
+            ]
         )
         self.disks.setSortingEnabled(True)
         self.disks.setSelectionBehavior(QtWidgets.QAbstractItemView.SelectRows)
@@ -1897,162 +1908,41 @@ class FileSystemsTab(QtWidgets.QWidget):
         main.addWidget(self.io_label)
         main.addWidget(self.disks)
 
-        self.prev_disk: Dict[str, psutil._common.sdiskio] = {}
-        self.prev_t = time.monotonic()
-
         # Populate once; refreshed again when tab is shown
         self.refresh()
 
-    def _progress_cell(self, percent: float, used_text: str) -> QtWidgets.QWidget:
-        """Return a QWidget containing a progress bar with 'used_text' as label."""
-        w = QtWidgets.QWidget()
-        lay = QtWidgets.QHBoxLayout(w)
-        lay.setContentsMargins(4, 2, 4, 2)
-        p = QtWidgets.QProgressBar()
-        p.setRange(0, 100)
-        p.setValue(int(round(percent)))
-        p.setFormat(f"{used_text}   {percent:.0f}%")
-        p.setTextVisible(True)
-        p.setFixedHeight(18)
-        lay.addWidget(p)
-        return w
-
     def refresh(self):
-        # ----- Mounted partitions with progress bar -----
-        try:
-            # Request every partition on the system.  Using ``all=True`` is
-            # required on Windows so that removable drives (USB sticks, external
-            # HDDs, ... ) show up as well.  We'll filter the entries below.
-            parts = psutil.disk_partitions(all=True)
-        except Exception:
-            parts = []
-
-        # Ensure the current OS partition shows up even if ``psutil`` did not
-        # report it.  On some systems the system drive/root may be omitted which
-        # would hide the main disk from the UI.
-        if IS_WINDOWS:
-            sys_drive = os.environ.get("SystemDrive", "C:")
-            if not sys_drive.endswith("\\"):
-                sys_drive += "\\"
-            if not any(p.mountpoint.lower() == sys_drive.lower() for p in parts):
-                parts.append(
-                    psutil._common.sdiskpart(
-                        device=sys_drive,
-                        mountpoint=sys_drive,
-                        fstype="unknown",
-                        opts="",
-                    )
-                )
-        elif IS_LINUX:
-            if not any(p.mountpoint == "/" for p in parts):
-                parts.append(
-                    psutil._common.sdiskpart(
-                        device="/",
-                        mountpoint="/",
-                        fstype="unknown",
-                        opts="",
-                    )
-                )
-
+        # ----- Mounted partitions -----
+        parts = safe_partitions()
         self.mounts.setRowCount(0)
-
-        # Collect valid partitions keyed by their mount point.  Some
-        # platforms (notably Linux containers) may report the same
-        # mount point multiple times with placeholder entries that have
-        # no size information.  We keep the entry with the largest
-        # total size for each mount point which ensures that a later,
-        # "real" partition such as the root "/" overrides any earlier
-        # dummy one.
-        by_mount: Dict[str, Tuple[psutil._common.sdiskpart, psutil._common.sdiskusage]] = {}
-        for p in parts:
-            try:
-                usage = psutil.disk_usage(p.mountpoint)
-            except Exception:
-                # Skip partitions that ``psutil`` cannot inspect
+        for dev, mnt, fstype, usage in parts:
+            if usage is None:
                 continue
-
-            # ``psutil`` may return entries with missing information (e.g. empty
-            # ``fstype`` on some removable drives).  Accept those entries by
-            # substituting a placeholder type instead of discarding the whole
-            # partition.
-            if not p.mountpoint:
-                continue
-            fstype = p.fstype or "unknown"
-            if usage.total <= 0:
-                continue
-
-            prev = by_mount.get(p.mountpoint)
-            # Keep the partition with the largest capacity to avoid placeholder
-            # pseudo entries hiding the real one (common on Linux containers).
-            if not prev or usage.total > prev[1].total:
-                p_fixed = psutil._common.sdiskpart(
-                    device=p.device,
-                    mountpoint=p.mountpoint,
-                    fstype=fstype,
-                    opts=p.opts,
-                )
-                by_mount[p.mountpoint] = (p_fixed, usage)
-
-        # Populate the table with the filtered/validated partitions
-        for p, usage in by_mount.values():
             row = self.mounts.rowCount()
             self.mounts.insertRow(row)
-
-            dev = p.device if p.device else p.mountpoint
             self.mounts.setItem(row, 0, QtWidgets.QTableWidgetItem(dev))
-            self.mounts.setItem(row, 1, QtWidgets.QTableWidgetItem(p.mountpoint))
-            self.mounts.setItem(row, 2, QtWidgets.QTableWidgetItem(p.fstype))
+            self.mounts.setItem(row, 1, QtWidgets.QTableWidgetItem(mnt))
+            self.mounts.setItem(row, 2, QtWidgets.QTableWidgetItem(fstype))
             self.mounts.setItem(row, 3, QtWidgets.QTableWidgetItem(human_bytes(usage.total)))
-            self.mounts.setItem(row, 4, QtWidgets.QTableWidgetItem(human_bytes(usage.free)))
+            self.mounts.setItem(row, 4, QtWidgets.QTableWidgetItem(human_bytes(usage.used)))
+            self.mounts.setItem(row, 5, QtWidgets.QTableWidgetItem(human_bytes(usage.free)))
+            self.mounts.setItem(row, 6, QtWidgets.QTableWidgetItem(f"{usage.percent:.1f}"))
 
-            used_text = human_bytes(usage.used)
-            used_widget = self._progress_cell(usage.percent, used_text)
-            self.mounts.setCellWidget(row, 5, used_widget)
-
-        # Hide rows that still have missing data (safety check)
-        for row in range(self.mounts.rowCount()):
-            hide = False
-            for col in range(5):  # last column has widget
-                if self.mounts.item(row, col) is None:
-                    hide = True
-                    break
-            self.mounts.setRowHidden(row, hide)
-
-        # ----- Per-disk I/O (totals + rates) -----
-        now = time.monotonic()
-        dt = max(1e-6, now - self.prev_t)
-        try:
-            io_per = psutil.disk_io_counters(perdisk=True)
-        except Exception:
-            io_per = {}
-
+        # ----- Per-disk I/O totals -----
+        io_per = disk_io_counters()
         self.disks.setRowCount(0)
         for disk, io in io_per.items():
-            read_total = getattr(io, 'read_bytes', 0)
-            write_total = getattr(io, 'write_bytes', 0)
-            reads = getattr(io, 'read_count', 0)
-            writes = getattr(io, 'write_count', 0)
-            busy = getattr(io, 'busy_time', 0) if hasattr(io, 'busy_time') else 0
-
-            prev = self.prev_disk.get(disk)
-            read_s = write_s = 0.0
-            if prev:
-                read_s = max(0, read_total - getattr(prev, 'read_bytes', 0)) / 1024.0 / dt
-                write_s = max(0, write_total - getattr(prev, 'write_bytes', 0)) / 1024.0 / dt
-            self.prev_disk[disk] = io
-
             row = self.disks.rowCount()
             self.disks.insertRow(row)
             self.disks.setItem(row, 0, QtWidgets.QTableWidgetItem(disk))
-            self.disks.setItem(row, 1, QtWidgets.QTableWidgetItem(human_bytes(read_total)))
-            self.disks.setItem(row, 2, QtWidgets.QTableWidgetItem(human_bytes(write_total)))
-            self.disks.setItem(row, 3, QtWidgets.QTableWidgetItem(human_rate_kib(read_s)))
-            self.disks.setItem(row, 4, QtWidgets.QTableWidgetItem(human_rate_kib(write_s)))
-            self.disks.setItem(row, 5, QtWidgets.QTableWidgetItem(str(reads)))
-            self.disks.setItem(row, 6, QtWidgets.QTableWidgetItem(str(writes)))
-            self.disks.setItem(row, 7, QtWidgets.QTableWidgetItem(f"{busy} ms" if busy else "—"))
-
-        self.prev_t = now
+            self.disks.setItem(row, 1, QtWidgets.QTableWidgetItem(str(getattr(io, 'read_count', 0))))
+            self.disks.setItem(row, 2, QtWidgets.QTableWidgetItem(str(getattr(io, 'write_count', 0))))
+            self.disks.setItem(row, 3, QtWidgets.QTableWidgetItem(human_bytes(getattr(io, 'read_bytes', 0))))
+            self.disks.setItem(row, 4, QtWidgets.QTableWidgetItem(human_bytes(getattr(io, 'write_bytes', 0))))
+            self.disks.setItem(row, 5, QtWidgets.QTableWidgetItem(str(getattr(io, 'read_time', 0))))
+            self.disks.setItem(row, 6, QtWidgets.QTableWidgetItem(str(getattr(io, 'write_time', 0))))
+            busy = getattr(io, 'busy_time', None)
+            self.disks.setItem(row, 7, QtWidgets.QTableWidgetItem(str(busy) if busy is not None else "-"))
 
     def showEvent(self, e: QtGui.QShowEvent):
         self.refresh()
