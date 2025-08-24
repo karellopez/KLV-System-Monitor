@@ -2624,7 +2624,7 @@ class AboutDialog(QtWidgets.QDialog):
     def __init__(self, parent: Optional[QtWidgets.QWidget] = None) -> None:
         super().__init__(parent)
         self.setWindowTitle("About KLV System Monitor")
-        self.resize(420, 600)
+        self.resize(680, 900)
 
         # Scroll area allows the text and images to exceed the dialog size.
         scroll = QtWidgets.QScrollArea(self)
