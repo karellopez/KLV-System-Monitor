@@ -1,0 +1,14 @@
+PyQt5==5.15.11
+pyqtgraph==0.13.7
+psutil==7.0.0
+
+[dev]
+pytest
+mypy
+ruff
+black
+build
+twine
+
+[gpu-nvidia]
+nvidia-ml-py3>=7.352.0
