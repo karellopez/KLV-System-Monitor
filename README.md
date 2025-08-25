@@ -1,29 +1,152 @@
 # KLV-System-Monitor
 
-KLV System Monitor is a lightweight, cross-platform system monitoring tool
-written in Python with PyQt5 and psutil. It provides a modern, customizable
-interface inspired by the Ubuntu system monitor, while adding advanced features
-for efficiency, flexibility, and user control.
+**KLV System Monitor** is a lightweight system monitor written in Python (PyQt5 + psutil) with a focus on **clarity, low overhead, and control**.  
+It takes inspiration from **GNOME/Ubuntu System Monitor** and brings a similarly clean experience to **Linux and Windows**, while adding features that were missing elsewhere.
 
-CPU usage can be visualized in three modes—**Multi thread**, **General view**, and
-**Multi window**—selectable from the Preferences dialog.
+- **Three CPU views**: **Multi thread**, **General view**, and **Multi window** (selectable in **Preferences**).
+- **Configurable smoothing and refresh**: decoupled refresh rates for plots vs. text/labels; per-subsystem EMA alphas (CPU, memory, network).
+- **Tunable visuals**: line width, colors (per-core or mono), grid toggles, antialiasing, translucent fill for CPU areas, and frequency labels per core.
+- **Efficient updates**: process table refreshes **only when visible**; file systems view refreshes **on demand**.
+- **Power tools**: filter and sort processes; clear current selection (stop following) and **kill selected** (when permitted).
 
-Plots adapt to the selected theme. "Multi window" graphs show axes without tick
-labels and overlay each core's usage, number, and optional frequency atop its
-panel. The Preferences dialog exposes controls for mini-plot size, column
-count, a single-color option for all cores, and separate EMA alphas for CPU,
-memory, and network graphs. CPU plots can optionally be filled with translucent
-color, and network smoothing can be toggled independently.
+---
 
-Recent updates further reduce the monitor's own CPU usage by batching
-per-process information retrieval, decoupling plot and text refresh rates,
-and refreshing the file system view only on demand. Graph antialiasing is
-enabled again for crisp rendering and can now be toggled in Preferences.
-The Processes tab now updates only when visible, and its refresh interval is
-configurable via the Preferences dialog.
+## Feature tour
 
-The Processes tab also includes buttons to clear the current selection so the
-view stops following a particular process and to kill selected processes.
+### 1) CPU — General view (single curve)
+Shows total CPU usage over the last 60 seconds with a fixed **0–100%** Y-axis.
+The average CPU frequency and total CPU usage are displayed beneath the chart.  
+Smoothing (EMA) and antialiasing can be enabled/disabled in **Preferences**.
+
+![CPU – General view](assets/general_view.gif)
+
+**How to read this view**
+- **X-axis**: time window (seconds).  
+- **Y-axis**: total CPU utilization (%).  
+- **Footer**: average CPU frequency across cores + total CPU usage.
+
+---
+
+### 2) CPU — Multi-thread view (all cores)
+Per-CPU utilization is plotted **simultaneously**, one colored line per core/thread.  
+Each legend entry shows **CPU name → current % and frequency** (if frequency display is enabled).  
+Line thickness, colors, smoothing and grids are configurable in **Preferences**.
+
+![CPU – Multi-thread view](assets/Thread_view.gif)
+
+**Tips**
+- Colors are persistent and can be customized.  
+- Toggle extra smoothing for a look similar to GNOME System Monitor.
+
+---
+
+### 3) CPU — Parallel processes tracking
+An example of a parallel workload starting and ramping up.  
+You can see how multiple threads pick up work at the same time and how the smoothing avoids jagged spikes while keeping short-term dynamics readable.
+
+![CPU – Parallel processes tracking](assets/parallel_processes_tracking.gif)
+
+---
+
+### 4) CPU — Multi-window per-core view
+Compact **grid of mini-plots**: one small chart per core.  
+Great for many-core systems; the grid is scrollable and the number of columns is configurable.  
+You can optionally show axes, match label color to plot color, or use a mono color for all mini-plots.
+
+![CPU – Multi-window view](assets/multi_window_view.gif)
+
+---
+
+### 5) Memory, Swap and Network
+Two stacked panels:
+- **Memory & Swap**: filled area chart with used memory and cache; swap status is shown on the right.  
+- **Network**: receive/send rates (per second) plus totals since the start of the session.  
+Both panels support optional EMA smoothing and gridlines.
+
+![Memory, Swap and Network](assets/Memory_swap_and_network.gif)
+
+---
+
+### 6) File Systems tab
+Overview of mounted file systems and low-level disk I/O:
+
+![File systems](assets/file_system.png)
+
+**Mounted File Systems**
+- Columns: **Device**, **Mount**, **Type**, **Total**, **Used**, **Free**, **%**.  
+- The percentage column includes a horizontal utilization bar.
+
+**Disk I/O**
+- Per-disk counters since boot: **reads / writes / read bytes / write bytes / read time / write time / busy ms**.
+
+---
+
+### 7) Processes tab
+A fast, filterable process table that updates only when the tab is visible (to reduce overhead).
+
+![Processes](assets/processes.png)
+
+**Features**
+- **Filter box** (top-left): search by process name, user, or PID.  
+- Click column headers to **sort** (ascending/descending).  
+- Columns: **Process Name**, **User**, **% CPU**, **PID**, **Memory**, **Disk read total**, **Disk write total**, …  
+- **Clear Selection**: stops following the current process (if you were tracking one).  
+- **Kill Selected**: terminates selected processes (requires sufficient permissions).
+
+The refresh interval of this tab is configurable in **Preferences**.
+
+---
+
+### 8) Preferences
+All performance, smoothing and UI options in one place:
+
+![Preferences](assets/preferences.png)
+
+**Global settings**
+- **History window (seconds)** — width of the time window.  
+- **Plot update interval (ms)** — how often lines are redrawn.  
+- **Text update interval (ms)** — how often labels (%/GHz) refresh.  
+- **Processes refresh interval (ms)**, **File systems refresh interval (ms)** — decoupled from plot updates.  
+- **CPU / Memory / Network EMA alpha** — smoothing strength (0–0.999).  
+- **Show per-CPU frequencies (and average)** — overlay GHz per core + mean.  
+- **Show X/Y grid**, **Grid squares per axis**.  
+- **Smooth network graph (EMA)**, **Enable antialiasing**, **Fill CPU graphs with transparency**.
+
+**Multi-thread view**
+- **Thread line width (px)**.  
+- **Smooth graphs (EMA)** and **Extra smoothing for CPU lines (double-EMA)**.
+
+**General view**
+- **Curve color** for the single-curve CPU view.
+
+**Multi-window**
+- **Mini plot min width/height (px)**, **columns count** (grid layout).  
+- **Show axes in multi-window plots**.  
+- **Mono color for multi-window plots** (or per-core colors).  
+- **CPU label placement** and **Match label color to plot**.
+
+Footer buttons: **Restore Defaults**, **Apply**, **Cancel**, **OK**.
+
+---
+
+### Themes & Appearance
+
+KLV System Monitor ships with multiple built-in themes ranging from light to deep dark.  
+Charts, legends and UI widgets adapt automatically to the selected theme to preserve contrast and readability.
+
+![Themes overview](assets/themes_feature.png)
+<!-- If you want it to also render on PyPI, use a raw GitHub URL instead:
+-->
+
+**Highlights**
+- **Theme selector** in **Preferences → Theme** (instant preview).
+- High-contrast palettes for per-CPU lines and legends in both light and dark modes.
+- Optional **antialiasing** for extra-smooth curves (toggle in Preferences).
+- Grid visibility (X/Y), line width, mono/per-core colors, and label color matching are all configurable.
+- The general CPU view keeps a fixed **0–100%** Y-axis for consistent reading across themes.
+
+
+---
 
 ## Requirements
 
@@ -47,7 +170,7 @@ You can install KLV System Monitor in two ways:
 | OS               | Script                           | How to Run                                                                                                                                                                                                         | Duration |
 |------------------|----------------------------------|--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|---------|
 | **Windows 10/11**| `install_klv_system_monitor.bat` | Double-click. This will open a terminal and the installation will start.<br/>If you are not familiar to terminals, please, do not be afraid. <br/>This script do not have any permission to make undesired things. | ≈ 5 min |
-| **Linux**        | `install_klv_system_monitor.sh`        | Open a terminal in the path fo the installer and type: <br/>`./klv_system_monitor.sh`                                                                                                                              | ≈ 5 min |
+| **Linux**        | `install_klv_system_monitor.sh`  | Open a terminal in the path of the installer and type: <br/>`./klv_system_monitor.sh`                                                                                                                               | ≈ 5 min |
 
 3. After the installation finishes, you will find two shortcuts on your desktop:
 
