@@ -1,2 +1,0 @@
-[gui_scripts]
-klvtop = klv_system_monitor.klv_system_monitor:main
