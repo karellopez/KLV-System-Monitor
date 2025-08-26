@@ -1,8 +1,4 @@
 # KLV-System-Monitor
-![GitHub Repo stars](https://img.shields.io/github/stars/karellopez/KLV-System-Monitor?style=social)
-![GitHub watchers](https://img.shields.io/github/watchers/karellopez/KLV-System-Monitor?style=social)
-![GitHub forks](https://img.shields.io/github/forks/karellopez/KLV-System-Monitor?style=social)
-
 
 **KLV System Monitor** is a lightweight system monitor written in Python (PyQt5 + psutil) with a focus on **clarity, low overhead, and control**.  
 It takes inspiration from **GNOME/Ubuntu System Monitor** and brings a similarly clean experience to **Linux and Windows**, while adding features that were missing elsewhere.
@@ -13,9 +9,15 @@ It takes inspiration from **GNOME/Ubuntu System Monitor** and brings a similarly
 - **Efficient updates**: process table refreshes **only when visible**; file systems view refreshes **on demand**.
 - **Power tools**: filter and sort processes; clear current selection (stop following) and **kill selected** (when permitted).
 
+---
 
-💡 **If you find this project useful, please give it a ⭐ Star and consider 👁 Watch to get updates on new releases.**  
-Your support helps me improve and keep adding features  
+<p align="center">
+  💡 <b>If you find this project useful, please give it a ⭐ Star and consider 👁 Watch to get updates on new releases.</b><br>
+  Your support helps me improve and keep adding features 🚀
+</p>
+
+---
+
 
 ---
 
