@@ -19,8 +19,6 @@ It takes inspiration from **GNOME/Ubuntu System Monitor** and brings a similarly
 ---
 
 
----
-
 ## Feature tour
 
 ### 1) CPU — General view (single curve)
@@ -33,7 +31,7 @@ Smoothing (EMA) and antialiasing can be enabled/disabled in **Preferences**.
 **How to read this view**
 - **X-axis**: time window (seconds).  
 - **Y-axis**: total CPU utilization (%).  
-      - **Footer**: average CPU frequency across cores, CPU temperature, and total CPU usage.
+- **Footer**: average CPU frequency across cores, CPU temperature, and total CPU usage.
 
 ---
 
