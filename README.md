@@ -25,7 +25,7 @@ It takes inspiration from **GNOME/Ubuntu System Monitor** and brings a similarly
 
 ### 1) CPU — General view (single curve)
 Shows total CPU usage over the last 60 seconds with a fixed **0–100%** Y-axis.
-The average CPU frequency and total CPU usage are displayed beneath the chart.  
+      The average CPU frequency, CPU temperature and total CPU usage are displayed beneath the chart.
 Smoothing (EMA) and antialiasing can be enabled/disabled in **Preferences**.
 
 ![CPU – General view](https://raw.githubusercontent.com/karellopez/KLV-System-Monitor/main/assets/general_view.gif)
@@ -33,7 +33,7 @@ Smoothing (EMA) and antialiasing can be enabled/disabled in **Preferences**.
 **How to read this view**
 - **X-axis**: time window (seconds).  
 - **Y-axis**: total CPU utilization (%).  
-- **Footer**: average CPU frequency across cores + total CPU usage.
+      - **Footer**: average CPU frequency across cores, CPU temperature, and total CPU usage.
 
 ---
 

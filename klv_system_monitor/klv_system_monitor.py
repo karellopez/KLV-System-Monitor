@@ -703,6 +703,10 @@ class ResourcesTab(QtWidgets.QWidget):
         self.cpu_freq_avg_label = QtWidgets.QLabel("Average frequency: —")
         self.cpu_freq_avg_label.setStyleSheet("margin-left:2px;")
 
+        # CPU temperature label
+        self.cpu_temp_label = QtWidgets.QLabel("CPU Temperature: —")
+        self.cpu_temp_label.setStyleSheet("margin-left:2px;")
+
         # ----- Additional CPU view widgets -----
         # General view: single average usage line
         self.cpu_gen_axis_bottom = TimeAxisItem(history_len, self.PLOT_UPDATE_MS / 1000.0)
@@ -1146,6 +1150,7 @@ class ResourcesTab(QtWidgets.QWidget):
             self.cpu_section.add_widget(self.cpu_plot)
             self.cpu_section.add_widget(self.cpu_legend_scroll)
             self.cpu_section.add_widget(self.cpu_freq_avg_label)
+            self.cpu_section.add_widget(self.cpu_temp_label)
             self.cpu_section.add_widget(self.cpu_total_label)
             lay.setStretch(0, 3)
             lay.setStretch(1, 2)
@@ -1153,12 +1158,14 @@ class ResourcesTab(QtWidgets.QWidget):
         elif mode == "General view":
             self.cpu_section.add_widget(self.cpu_general_plot)
             self.cpu_section.add_widget(self.cpu_freq_avg_label)
+            self.cpu_section.add_widget(self.cpu_temp_label)
             self.cpu_section.add_widget(self.cpu_total_label)
             lay.setStretch(0, 3)
             self._update_tick_steps(self.cpu_general_plot)
         else:  # Multi window
             self.cpu_section.add_widget(self.cpu_multi_scroll)
             self.cpu_section.add_widget(self.cpu_freq_avg_label)
+            self.cpu_section.add_widget(self.cpu_temp_label)
             self.cpu_section.add_widget(self.cpu_total_label)
             lay.setStretch(0, 3)
             for p in self.cpu_mini_plots:
@@ -1239,6 +1246,24 @@ class ResourcesTab(QtWidgets.QWidget):
                 avg_freq = win_avg
 
         return per_freq_mhz, avg_freq
+
+    def _get_cpu_temperature(self) -> Optional[float]:
+        """Return highest available CPU temperature in Celsius."""
+        try:
+            temps = psutil.sensors_temperatures()
+        except Exception:
+            return None
+        if not temps:
+            return None
+        max_temp = None
+        for entries in temps.values():
+            for t in entries:
+                cur = getattr(t, "current", None)
+                if cur is None:
+                    continue
+                if max_temp is None or cur > max_temp:
+                    max_temp = cur
+        return max_temp
 
     # ---------- public API (Preferences) ----------
     def apply_settings(
@@ -1398,6 +1423,7 @@ class ResourcesTab(QtWidgets.QWidget):
         fg_hex = fg.name()
         self.cpu_total_label.setStyleSheet(f"margin-left:2px; color: {fg_hex};")
         self.cpu_freq_avg_label.setStyleSheet(f"margin-left:2px; color: {fg_hex};")
+        self.cpu_temp_label.setStyleSheet(f"margin-left:2px; color: {fg_hex};")
 
     # ---------- TEXT TIMER (legend & labels) ----------
     def _update_text(self):
@@ -1450,6 +1476,11 @@ class ResourcesTab(QtWidgets.QWidget):
             self.cpu_freq_avg_label.setText(
                 f"Average frequency: {human_freq(avg_freq)}" if avg_freq else "Average frequency: —"
             )
+        temp_c = self._get_cpu_temperature()
+        if temp_c is not None:
+            self.cpu_temp_label.setText(f"CPU Temperature: {temp_c:.1f}°C")
+        else:
+            self.cpu_temp_label.setText("CPU Temperature: —")
         total_usage = sum(usages) / len(usages) if usages else 0.0
         self.cpu_total_label.setText(f"Total CPU Usage: {total_usage:.1f}%")
 
