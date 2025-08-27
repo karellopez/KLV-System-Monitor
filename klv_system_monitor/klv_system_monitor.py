@@ -610,6 +610,7 @@ class ResourcesTab(QtWidgets.QWidget):
     MEM_EMA_ALPHA     = 0.90
     NET_EMA_ALPHA     = 0.60   # independent network EMA alpha
     SHOW_CPU_FREQ     = IS_LINUX
+    SHOW_CPU_TEMP     = not IS_WINDOWS  # temperature reading not supported on Windows
     SMOOTH_GRAPHS     = True   # global smoothing toggle
     EXTRA_SMOOTHING   = True   # double-EMA for CPU lines (tames spikes)
     THREAD_LINE_WIDTH = 1.5    # px
@@ -703,9 +704,11 @@ class ResourcesTab(QtWidgets.QWidget):
         self.cpu_freq_avg_label = QtWidgets.QLabel("Average frequency: —")
         self.cpu_freq_avg_label.setStyleSheet("margin-left:2px;")
 
-        # CPU temperature label
-        self.cpu_temp_label = QtWidgets.QLabel("CPU Temperature: —")
-        self.cpu_temp_label.setStyleSheet("margin-left:2px;")
+        # CPU temperature label (may be None on Windows where temps are unsupported)
+        self.cpu_temp_label: Optional[QtWidgets.QLabel] = None
+        if not IS_WINDOWS:
+            self.cpu_temp_label = QtWidgets.QLabel("CPU Temperature: —")
+            self.cpu_temp_label.setStyleSheet("margin-left:2px;")
 
         # ----- Additional CPU view widgets -----
         # General view: single average usage line
@@ -903,6 +906,9 @@ class ResourcesTab(QtWidgets.QWidget):
 
         self._win_freqs_cache: Tuple[Optional[List[float]], Optional[float]] = (None, None)
         self._win_freqs_thread: Optional[threading.Thread] = None
+        # Cache and worker thread for temperature queries so UI timer isn't blocked
+        self._temp_cache: Optional[float] = None
+        self._temp_thread: Optional[threading.Thread] = None
 
         psutil.cpu_percent(percpu=True)  # warm-up to set baselines
 
@@ -914,6 +920,8 @@ class ResourcesTab(QtWidgets.QWidget):
         self.text_timer.timeout.connect(self._update_text)
 
         self._apply_freq_visibility()
+        if self.SHOW_CPU_TEMP and self.cpu_temp_label is not None:
+            self._schedule_temperature()
         self._update_tick_steps()
 
     def showEvent(self, e: QtGui.QShowEvent):
@@ -1150,7 +1158,8 @@ class ResourcesTab(QtWidgets.QWidget):
             self.cpu_section.add_widget(self.cpu_plot)
             self.cpu_section.add_widget(self.cpu_legend_scroll)
             self.cpu_section.add_widget(self.cpu_freq_avg_label)
-            self.cpu_section.add_widget(self.cpu_temp_label)
+            if self.SHOW_CPU_TEMP and self.cpu_temp_label is not None:
+                self.cpu_section.add_widget(self.cpu_temp_label)
             self.cpu_section.add_widget(self.cpu_total_label)
             lay.setStretch(0, 3)
             lay.setStretch(1, 2)
@@ -1158,14 +1167,16 @@ class ResourcesTab(QtWidgets.QWidget):
         elif mode == "General view":
             self.cpu_section.add_widget(self.cpu_general_plot)
             self.cpu_section.add_widget(self.cpu_freq_avg_label)
-            self.cpu_section.add_widget(self.cpu_temp_label)
+            if self.SHOW_CPU_TEMP and self.cpu_temp_label is not None:
+                self.cpu_section.add_widget(self.cpu_temp_label)
             self.cpu_section.add_widget(self.cpu_total_label)
             lay.setStretch(0, 3)
             self._update_tick_steps(self.cpu_general_plot)
         else:  # Multi window
             self.cpu_section.add_widget(self.cpu_multi_scroll)
             self.cpu_section.add_widget(self.cpu_freq_avg_label)
-            self.cpu_section.add_widget(self.cpu_temp_label)
+            if self.SHOW_CPU_TEMP and self.cpu_temp_label is not None:
+                self.cpu_section.add_widget(self.cpu_temp_label)
             self.cpu_section.add_widget(self.cpu_total_label)
             lay.setStretch(0, 3)
             for p in self.cpu_mini_plots:
@@ -1179,6 +1190,19 @@ class ResourcesTab(QtWidgets.QWidget):
 
     def _apply_freq_visibility(self):
         self.cpu_freq_avg_label.setVisible(self.SHOW_CPU_FREQ)
+
+    def _temperature_worker(self):
+        """Background worker to fetch CPU temperature without stalling UI."""
+        self._temp_cache = self._get_cpu_temperature()
+        self._temp_thread = None
+
+    def _schedule_temperature(self):
+        """Spawn a worker thread to refresh CPU temperature."""
+        if self._temp_thread is None or not self._temp_thread.is_alive():
+            self._temp_thread = threading.Thread(
+                target=self._temperature_worker, daemon=True
+            )
+            self._temp_thread.start()
 
     def _windows_freq_worker(self):
         self._win_freqs_cache = self._windows_cpu_freqs()
@@ -1274,6 +1298,7 @@ class ResourcesTab(QtWidgets.QWidget):
         ema_alpha: float,
         mem_ema_alpha: float,
         show_cpu_freq: bool,
+        show_cpu_temp: bool,
         thread_line_width: float,
         show_grid_x: bool,
         show_grid_y: bool,
@@ -1303,6 +1328,7 @@ class ResourcesTab(QtWidgets.QWidget):
         self.EMA_ALPHA         = float(min(0.999, max(0.0, ema_alpha)))
         self.MEM_EMA_ALPHA     = float(min(0.999, max(0.0, mem_ema_alpha)))
         self.SHOW_CPU_FREQ     = bool(show_cpu_freq) if IS_LINUX else False
+        self.SHOW_CPU_TEMP     = bool(show_cpu_temp) if not IS_WINDOWS else False
         self.THREAD_LINE_WIDTH = float(max(0.5, thread_line_width))
         self.SHOW_GRID_X       = bool(show_grid_x)
         self.SHOW_GRID_Y       = bool(show_grid_y)
@@ -1400,6 +1426,8 @@ class ResourcesTab(QtWidgets.QWidget):
 
         # Frequencies visibility
         self._apply_freq_visibility()
+        if self.SHOW_CPU_TEMP and self.cpu_temp_label is not None:
+            self._schedule_temperature()
         
     def apply_theme(self, palette: QtGui.QPalette):
         """Update plot colors to match the given palette."""
@@ -1423,7 +1451,8 @@ class ResourcesTab(QtWidgets.QWidget):
         fg_hex = fg.name()
         self.cpu_total_label.setStyleSheet(f"margin-left:2px; color: {fg_hex};")
         self.cpu_freq_avg_label.setStyleSheet(f"margin-left:2px; color: {fg_hex};")
-        self.cpu_temp_label.setStyleSheet(f"margin-left:2px; color: {fg_hex};")
+        if self.cpu_temp_label is not None:
+            self.cpu_temp_label.setStyleSheet(f"margin-left:2px; color: {fg_hex};")
 
     # ---------- TEXT TIMER (legend & labels) ----------
     def _update_text(self):
@@ -1476,11 +1505,16 @@ class ResourcesTab(QtWidgets.QWidget):
             self.cpu_freq_avg_label.setText(
                 f"Average frequency: {human_freq(avg_freq)}" if avg_freq else "Average frequency: —"
             )
-        temp_c = self._get_cpu_temperature()
-        if temp_c is not None:
-            self.cpu_temp_label.setText(f"CPU Temperature: {temp_c:.1f}°C")
-        else:
-            self.cpu_temp_label.setText("CPU Temperature: —")
+
+        if self.SHOW_CPU_TEMP and self.cpu_temp_label is not None:
+            # Non-blocking temperature update using cached value
+            self._schedule_temperature()
+            temp_c = self._temp_cache
+            if temp_c is not None:
+                self.cpu_temp_label.setText(f"CPU Temperature: {temp_c:.1f}°C")
+            else:
+                self.cpu_temp_label.setText("CPU Temperature: —")
+
         total_usage = sum(usages) / len(usages) if usages else 0.0
         self.cpu_total_label.setText(f"Total CPU Usage: {total_usage:.1f}%")
 
@@ -2062,6 +2096,7 @@ class PreferencesDialog(QtWidgets.QDialog):
       - Memory EMA alpha
       - Network EMA alpha
       - Show per-CPU frequencies
+      - Show CPU temperature
       - Thread line width (px)
       - Toggle X grid / Y grid
       - Grid squares per axis
@@ -2151,6 +2186,11 @@ class PreferencesDialog(QtWidgets.QDialog):
         if IS_LINUX:
             self.in_show_freq = QtWidgets.QCheckBox("Show per-CPU frequencies (and average)")
             self.in_show_freq.setChecked(resources_tab.SHOW_CPU_FREQ)
+
+        self.in_show_temp: Optional[QtWidgets.QCheckBox] = None
+        if not IS_WINDOWS:
+            self.in_show_temp = QtWidgets.QCheckBox("Show CPU temperature")
+            self.in_show_temp.setChecked(resources_tab.SHOW_CPU_TEMP)
 
         self.in_width = QtWidgets.QDoubleSpinBox()
         self.in_width.setRange(0.5, 8.0)
@@ -2299,6 +2339,13 @@ class PreferencesDialog(QtWidgets.QDialog):
                 global_form,
                 self.in_show_freq,
                 "Display per-CPU frequency lines and their average.",
+            )
+        if self.in_show_temp is not None:
+            global_form.addRow(self.in_show_temp)
+            _set_tip(
+                global_form,
+                self.in_show_temp,
+                "Display CPU temperature when available.",
             )
         self.in_grid_x.setToolTip("Toggle vertical grid lines on plots.")
         global_form.addRow(self.in_grid_x)
@@ -2476,6 +2523,7 @@ class PreferencesDialog(QtWidgets.QDialog):
             float(self.in_mem_ema.value()),
             float(self.in_net_ema.value()),
             bool(self.in_show_freq.isChecked()) if self.in_show_freq is not None else False,
+            bool(self.in_show_temp.isChecked()) if self.in_show_temp is not None else False,
             float(self.in_width.value()),
             bool(self.in_grid_x.isChecked()),
             bool(self.in_grid_y.isChecked()),
@@ -2510,6 +2558,7 @@ class PreferencesDialog(QtWidgets.QDialog):
             mem_ema,
             net_ema,
             show_freq,
+            show_temp,
             width,
             grid_x,
             grid_y,
@@ -2539,6 +2588,7 @@ class PreferencesDialog(QtWidgets.QDialog):
             ema_alpha=ema,
             mem_ema_alpha=mem_ema,
             show_cpu_freq=show_freq,
+            show_cpu_temp=show_temp,
             thread_line_width=width,
             show_grid_x=grid_x,
             show_grid_y=grid_y,
@@ -2576,6 +2626,7 @@ class PreferencesDialog(QtWidgets.QDialog):
                     "mem_ema_alpha": mem_ema,
                     "net_ema_alpha": net_ema,
                     "show_cpu_freq": show_freq,
+                    "show_cpu_temp": show_temp,
                     "thread_line_width": width,
                     "show_grid_x": grid_x,
                     "show_grid_y": grid_y,
@@ -2616,6 +2667,8 @@ class PreferencesDialog(QtWidgets.QDialog):
         self.in_net_ema.setValue(ResourcesTab.NET_EMA_ALPHA)
         if self.in_show_freq is not None:
             self.in_show_freq.setChecked(ResourcesTab.SHOW_CPU_FREQ)
+        if self.in_show_temp is not None:
+            self.in_show_temp.setChecked(ResourcesTab.SHOW_CPU_TEMP)
         self.in_width.setValue(ResourcesTab.THREAD_LINE_WIDTH)
         self.in_grid_x.setChecked(ResourcesTab.SHOW_GRID_X)
         self.in_grid_y.setChecked(ResourcesTab.SHOW_GRID_Y)
@@ -2896,6 +2949,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 ema_alpha=data.get("ema_alpha", self.resources_tab.EMA_ALPHA),
                 mem_ema_alpha=data.get("mem_ema_alpha", self.resources_tab.MEM_EMA_ALPHA),
                 show_cpu_freq=data.get("show_cpu_freq", self.resources_tab.SHOW_CPU_FREQ),
+                show_cpu_temp=data.get("show_cpu_temp", self.resources_tab.SHOW_CPU_TEMP),
                 thread_line_width=data.get("thread_line_width", self.resources_tab.THREAD_LINE_WIDTH),
                 show_grid_x=data.get("show_grid_x", self.resources_tab.SHOW_GRID_X),
                 show_grid_y=data.get("show_grid_y", self.resources_tab.SHOW_GRID_Y),
