@@ -1,0 +1,15 @@
+LICENSE
+MANIFEST.in
+README.md
+pyproject.toml
+klv_system_monitor/__init__.py
+klv_system_monitor/klv_system_monitor.py
+klv_system_monitor/list_disks.py
+klv_system_monitor.egg-info/PKG-INFO
+klv_system_monitor.egg-info/SOURCES.txt
+klv_system_monitor.egg-info/dependency_links.txt
+klv_system_monitor.egg-info/entry_points.txt
+klv_system_monitor.egg-info/requires.txt
+klv_system_monitor.egg-info/top_level.txt
+klv_system_monitor/miscellaneous/images/Karel.jpeg
+klv_system_monitor/miscellaneous/images/icon.png
