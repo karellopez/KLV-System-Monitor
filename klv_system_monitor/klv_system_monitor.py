@@ -609,7 +609,7 @@ class ResourcesTab(QtWidgets.QWidget):
     EMA_ALPHA         = 0.60   # base EMA alpha
     MEM_EMA_ALPHA     = 0.90
     NET_EMA_ALPHA     = 0.60   # independent network EMA alpha
-    SHOW_CPU_FREQ     = IS_LINUX
+    SHOW_CPU_FREQ     = IS_LINUX or IS_WINDOWS
     SHOW_CPU_TEMP     = not IS_WINDOWS  # temperature reading not supported on Windows
     SMOOTH_GRAPHS     = True   # global smoothing toggle
     EXTRA_SMOOTHING   = True   # double-EMA for CPU lines (tames spikes)
@@ -1240,7 +1240,7 @@ class ResourcesTab(QtWidgets.QWidget):
         self.TEXT_UPDATE_MS    = int(max(50, text_update_ms))
         self.EMA_ALPHA         = float(min(0.999, max(0.0, ema_alpha)))
         self.MEM_EMA_ALPHA     = float(min(0.999, max(0.0, mem_ema_alpha)))
-        self.SHOW_CPU_FREQ     = bool(show_cpu_freq) if IS_LINUX else False
+        self.SHOW_CPU_FREQ     = bool(show_cpu_freq) if (IS_LINUX or IS_WINDOWS) else False
         self.SHOW_CPU_TEMP     = bool(show_cpu_temp) if not IS_WINDOWS else False
         self.THREAD_LINE_WIDTH = float(max(0.5, thread_line_width))
         self.SHOW_GRID_X       = bool(show_grid_x)
@@ -2084,7 +2084,7 @@ class PreferencesDialog(QtWidgets.QDialog):
         self.in_net_ema.setValue(resources_tab.NET_EMA_ALPHA)
 
         self.in_show_freq: Optional[QtWidgets.QCheckBox] = None
-        if IS_LINUX:
+        if IS_LINUX or IS_WINDOWS:
             self.in_show_freq = QtWidgets.QCheckBox("Show per-CPU frequencies (and average)")
             self.in_show_freq.setChecked(resources_tab.SHOW_CPU_FREQ)
 
