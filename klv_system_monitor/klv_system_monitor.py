@@ -24,15 +24,15 @@ from collections import deque
 from typing import Dict, Tuple, List, Optional
 from pathlib import Path
 
-import psutil
 import platform
-import subprocess
 import threading
 import os
 from PyQt5 import QtWidgets, QtCore, QtGui
 import pyqtgraph as pg
 
-from .list_disks import safe_partitions, disk_io_counters
+# Data acquisition helpers are kept separate from the GUI layer so that
+# all system queries live outside of this module.
+from .data_acquisition import cpu, memory, network, processes, disks
 
 # Directory used to store persistent user preferences
 PREF_DIR = Path(__file__).resolve().parent / "user_preferences"
@@ -648,7 +648,7 @@ class ResourcesTab(QtWidgets.QWidget):
         layout.setSpacing(12)
 
         # ----- CPU plot (time bottom axis, percent left axis) -----
-        self.n_cpu = psutil.cpu_count(logical=True) or 1
+        self.n_cpu = cpu.count(logical=True)
         history_len = self._history_len()
         self.cpu_view_mode = self.CPU_VIEW_MODE
 
@@ -897,20 +897,18 @@ class ResourcesTab(QtWidgets.QWidget):
         layout.addWidget(self.net_section, 1)
 
         # ----- Initial state & timers -----
-        self.prev_net = psutil.net_io_counters(pernic=False)
+        self.prev_net = network.io_counters()
         self.prev_t = time.monotonic()
 
         self.cpu_last_raw = [0.0] * self.n_cpu
         self.cpu_display_ema1 = [0.0] * self.n_cpu  # legend smoothing (double-EMA)
         self.cpu_display_ema2 = [0.0] * self.n_cpu
 
-        self._win_freqs_cache: Tuple[Optional[List[float]], Optional[float]] = (None, None)
-        self._win_freqs_thread: Optional[threading.Thread] = None
         # Cache and worker thread for temperature queries so UI timer isn't blocked
         self._temp_cache: Optional[float] = None
         self._temp_thread: Optional[threading.Thread] = None
 
-        psutil.cpu_percent(percpu=True)  # warm-up to set baselines
+        cpu.percent(percpu=True)  # warm-up to set baselines
 
         # Separate timers: plot vs stats (started when visible)
         self.plot_timer = QtCore.QTimer(self)
@@ -1193,7 +1191,7 @@ class ResourcesTab(QtWidgets.QWidget):
 
     def _temperature_worker(self):
         """Background worker to fetch CPU temperature without stalling UI."""
-        self._temp_cache = self._get_cpu_temperature()
+        self._temp_cache = cpu.temperature()
         self._temp_thread = None
 
     def _schedule_temperature(self):
@@ -1203,91 +1201,6 @@ class ResourcesTab(QtWidgets.QWidget):
                 target=self._temperature_worker, daemon=True
             )
             self._temp_thread.start()
-
-    def _windows_freq_worker(self):
-        self._win_freqs_cache = self._windows_cpu_freqs()
-        self._win_freqs_thread = None
-
-    def _schedule_windows_freqs(self):
-        if self._win_freqs_thread is None or not self._win_freqs_thread.is_alive():
-            self._win_freqs_thread = threading.Thread(
-                target=self._windows_freq_worker, daemon=True
-            )
-            self._win_freqs_thread.start()
-
-    def _windows_cpu_freqs(self) -> Tuple[Optional[List[float]], Optional[float]]:
-        """Fetch per-CPU frequencies on Windows via Get-Counter.
-
-        Returns a list of frequencies in MHz and their average. If unavailable,
-        returns (None, None).
-        """
-        try:
-            cmd = [
-                "powershell",
-                "-NoProfile",
-                "-Command",
-                r"(Get-Counter '\\Processor Information(*)\\Processor Frequency').CounterSamples | ForEach-Object { $_.InstanceName + '=' + $_.CookedValue }",
-            ]
-            out = subprocess.check_output(cmd, text=True)
-            freqs: List[float] = []
-            for line in out.strip().splitlines():
-                line = line.strip()
-                if not line or "=" not in line:
-                    continue
-                name, val = line.split("=", 1)
-                if name.strip().lower() == "_total":
-                    continue
-                try:
-                    freqs.append(float(val))
-                except ValueError:
-                    pass
-            if freqs:
-                avg = sum(freqs) / len(freqs)
-                return freqs, avg
-        except Exception:
-            pass
-        return None, None
-
-    def _get_cpu_freqs(self) -> Tuple[Optional[List[float]], Optional[float]]:
-        """Return per-CPU and average frequency in MHz, with Windows fallback."""
-        per_freq_mhz: Optional[List[float]] = None
-        avg_freq: Optional[float] = None
-        try:
-            freqs = psutil.cpu_freq(percpu=True)
-            if freqs:
-                per_freq_mhz = [max(0.0, getattr(f, 'current', 0.0)) for f in freqs[:self.n_cpu]]
-                valid = [f for f in per_freq_mhz if f and f > 0]
-                if valid:
-                    avg_freq = sum(valid) / len(valid)
-        except Exception:
-            pass
-
-        if platform.system() == "Windows":
-            self._schedule_windows_freqs()
-            win_freqs, win_avg = self._win_freqs_cache
-            if win_freqs:
-                per_freq_mhz = win_freqs[:self.n_cpu]
-                avg_freq = win_avg
-
-        return per_freq_mhz, avg_freq
-
-    def _get_cpu_temperature(self) -> Optional[float]:
-        """Return highest available CPU temperature in Celsius."""
-        try:
-            temps = psutil.sensors_temperatures()
-        except Exception:
-            return None
-        if not temps:
-            return None
-        max_temp = None
-        for entries in temps.values():
-            for t in entries:
-                cur = getattr(t, "current", None)
-                if cur is None:
-                    continue
-                if max_temp is None or cur > max_temp:
-                    max_temp = cur
-        return max_temp
 
     # ---------- public API (Preferences) ----------
     def apply_settings(
@@ -1457,7 +1370,7 @@ class ResourcesTab(QtWidgets.QWidget):
     # ---------- TEXT TIMER (legend & labels) ----------
     def _update_text(self):
         # Per-CPU usage (store raw, then double-EMA for stable legend)
-        per = psutil.cpu_percent(interval=None, percpu=True)
+        per = cpu.percent(percpu=True)
         n = min(len(per), self.n_cpu)
         usages = []
         for i in range(n):
@@ -1482,7 +1395,7 @@ class ResourcesTab(QtWidgets.QWidget):
         per_freq_mhz: Optional[List[float]] = None
         avg_freq = None
         if self.SHOW_CPU_FREQ:
-            per_freq_mhz, avg_freq = self._get_cpu_freqs()
+            per_freq_mhz, avg_freq = cpu.freqs(self.n_cpu)
 
         if self.cpu_view_mode == "Multi thread":
             self.cpu_legend_grid.set_values(usages, per_freq_mhz)
@@ -1552,11 +1465,7 @@ class ResourcesTab(QtWidgets.QWidget):
             self.cpu_general_curve.setData(list(self.cpu_general_history))
 
         # Memory / Swap (EMA)
-        vm = psutil.virtual_memory()
-        try:
-            sm = psutil.swap_memory()
-        except Exception:
-            sm = None
+        vm, sm = memory.stats()
         mem_val = vm.percent
         swap_val = sm.percent if sm and sm.total > 0 else 0.0
         if self.SMOOTH_GRAPHS:
@@ -1584,12 +1493,8 @@ class ResourcesTab(QtWidgets.QWidget):
         )
 
         # Network rates
-        now = time.monotonic()
-        dt = max(1e-6, now - self.prev_t)
-        cur = psutil.net_io_counters(pernic=False)
-        rx_kib = (cur.bytes_recv - self.prev_net.bytes_recv) / 1024.0 / dt
-        tx_kib = (cur.bytes_sent - self.prev_net.bytes_sent) / 1024.0 / dt
-        self.prev_net, self.prev_t = cur, now
+        rx_kib, tx_kib, self.prev_net, self.prev_t = network.rates(self.prev_net, self.prev_t)
+        cur = self.prev_net
 
         if self.SMOOTH_NET_GRAPH:
             na = self.NET_EMA_ALPHA
@@ -1729,8 +1634,8 @@ class ProcessesTab(QtWidgets.QWidget):
             return
         for pid in pids:
             try:
-                psutil.Process(pid).kill()
-            except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess) as e:
+                processes.kill(pid)
+            except (processes.NoSuchProcess, processes.AccessDenied, processes.ZombieProcess) as e:
                 QtWidgets.QMessageBox.warning(
                     self,
                     "Kill failed",
@@ -1795,7 +1700,7 @@ class ProcessesTab(QtWidgets.QWidget):
         self.table.setUpdatesEnabled(False)
 
         try:
-            for proc in psutil.process_iter([
+            for proc in processes.iter_processes([
                 'pid', 'name', 'username', 'cpu_percent',
                 'memory_info', 'io_counters', 'cmdline'
             ]):
@@ -1894,11 +1799,7 @@ class ProcessesTab(QtWidgets.QWidget):
 
     def showEvent(self, e: QtGui.QShowEvent):
         if not self._primed:
-            for p in psutil.process_iter(['pid']):
-                try:
-                    p.cpu_percent(None)
-                except Exception:
-                    pass
+            processes.prime_cpu_percent()
             self._primed = True
         self.timer.start(self.update_ms)
         super().showEvent(e)
@@ -2003,7 +1904,7 @@ class FileSystemsTab(QtWidgets.QWidget):
         m_scroll = self.mounts.verticalScrollBar().value()
         self.mounts.setSortingEnabled(False)
         self.mounts.setRowCount(0)
-        parts = safe_partitions()
+        parts = disks.partitions()
         for dev, mnt, fstype, usage in parts:
             if usage is None:
                 continue
@@ -2046,7 +1947,7 @@ class FileSystemsTab(QtWidgets.QWidget):
         d_scroll = self.disks.verticalScrollBar().value()
         self.disks.setSortingEnabled(False)
         self.disks.setRowCount(0)
-        io_per = disk_io_counters()
+        io_per = disks.io_counters()
         for disk, io in io_per.items():
             row = self.disks.rowCount()
             self.disks.insertRow(row)
