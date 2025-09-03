@@ -7,7 +7,7 @@
 #   - Click colored swatch in the CPU legend to choose a custom color per thread.
 #   - File Systems tab: percentage column shows a progress bar.
 #   - Preferences: antialiasing toggle, thread line width, toggle X/Y grid,
-#                  extra smoothing (double-EMA), and all previous knobs
+#                  extra smoothing (double-EMA), DPI scaling, and all previous knobs
 #                  (history, update cadences, EMA alphas, show per-CPU frequencies).
 #   - Separate plot vs text refresh intervals.
 #   - File Systems tab refreshes only when visible and its interval is configurable.
@@ -2166,6 +2166,15 @@ class PreferencesDialog(QtWidgets.QDialog):
             self.in_theme.addItem(name)
         self.in_theme.setCurrentText(current_theme)
 
+        self.in_dpi = QtWidgets.QSpinBox()
+        self.in_dpi.setRange(50, 400)
+        self.in_dpi.setSingleStep(25)
+        self.in_dpi.setSuffix("%")
+        if parent is not None and hasattr(parent, "dpi_scale"):
+            self.in_dpi.setValue(parent.dpi_scale)
+        else:
+            self.in_dpi.setValue(100)
+
         self.general_color = QtGui.QColor(resources_tab.cpu_general_color)
         self.in_general_btn = QtWidgets.QPushButton("Pick color")
         self.in_general_btn.clicked.connect(self._choose_general_color)
@@ -2178,6 +2187,8 @@ class PreferencesDialog(QtWidgets.QDialog):
 
         top_form = QtWidgets.QFormLayout()
         top_form.setLabelAlignment(QtCore.Qt.AlignRight)
+        top_form.addRow("DPI scaling:", self.in_dpi)
+        _set_tip(top_form, self.in_dpi, "Scale the interface by the given percentage.")
         top_form.addRow("Theme:", self.in_theme)
         _set_tip(top_form, self.in_theme, "Select the colour theme for the application.")
         top_form.addRow("CPU view mode:", self.in_cpu_mode)
@@ -2415,6 +2426,7 @@ class PreferencesDialog(QtWidgets.QDialog):
 
     def _read_values(self):
         return (
+            int(self.in_dpi.value()),
             int(self.in_history.value()),
             int(self.in_plot.value()),
             int(self.in_text.value()),
@@ -2450,6 +2462,7 @@ class PreferencesDialog(QtWidgets.QDialog):
 
     def apply(self):
         (
+            dpi_scale,
             history,
             plot_ms,
             text_ms,
@@ -2482,6 +2495,9 @@ class PreferencesDialog(QtWidgets.QDialog):
             general_color,
             theme_name,
         ) = self._read_values()
+        parent = self.parent()
+        if parent is not None and hasattr(parent, "set_dpi_scale"):
+            parent.set_dpi_scale(dpi_scale)
         self.resources_tab.apply_settings(
             history_seconds=history,
             plot_update_ms=plot_ms,
@@ -2514,10 +2530,10 @@ class PreferencesDialog(QtWidgets.QDialog):
         )
         self.processes_tab.set_update_ms(proc_ms)
         self.filesystems_tab.set_update_ms(fs_ms)
-        parent = self.parent()
         if parent is not None and hasattr(parent, "save_preferences"):
             parent.save_preferences(
                 {
+                    "dpi_scale": dpi_scale,
                     "history_seconds": history,
                     "plot_update_ms": plot_ms,
                     "text_update_ms": text_ms,
@@ -2558,6 +2574,7 @@ class PreferencesDialog(QtWidgets.QDialog):
         super().accept()
 
     def restore_defaults(self):
+        self.in_dpi.setValue(100)
         self.in_history.setValue(ResourcesTab.HISTORY_SECONDS)
         self.in_plot.setValue(ResourcesTab.PLOT_UPDATE_MS)
         self.in_text.setValue(ResourcesTab.TEXT_UPDATE_MS)
@@ -2778,6 +2795,13 @@ class MainWindow(QtWidgets.QMainWindow):
         self.themes = build_theme_dict()
         self.current_theme = None
 
+        app = QtWidgets.QApplication.instance()
+        self._base_font = app.font()
+        self._base_point_size = self._base_font.pointSizeF()
+        if self._base_point_size <= 0:
+            self._base_point_size = float(self._base_font.pointSize())
+        self.dpi_scale = 100
+
         default_theme = DEFAULT_THEME
         if self.theme_file.exists():
             try:
@@ -2820,6 +2844,23 @@ class MainWindow(QtWidgets.QMainWindow):
             self.processes_tab.timer.stop()
             self.filesystems_tab.timer.stop()
 
+    def set_dpi_scale(self, percent: int) -> None:
+        """Scale fonts and pyqtgraph elements according to *percent*."""
+        factor = max(percent, 25) / 100.0
+        app = QtWidgets.QApplication.instance()
+        font = QtGui.QFont(self._base_font)
+        font.setPointSizeF(self._base_point_size * factor)
+        app.setFont(font)
+        self.setFont(font)
+        self.tabs.setFont(font)
+        self.processes_tab.setFont(font)
+        self.resources_tab.setFont(font)
+        self.filesystems_tab.setFont(font)
+        self.about_btn.setFont(font)
+        self.pref_btn.setFont(font)
+        pg.setConfigOption('globalFontScale', factor)
+        self.dpi_scale = int(percent)
+
     def apply_theme(self, name: str):
         app = QtWidgets.QApplication.instance()
         palette = self.themes[name]
@@ -2843,6 +2884,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 data = json.loads(self.settings_file.read_text())
             except Exception:
                 return
+            self.set_dpi_scale(data.get("dpi_scale", self.dpi_scale))
             self.resources_tab.apply_settings(
                 history_seconds=data.get("history_seconds", self.resources_tab.HISTORY_SECONDS),
                 plot_update_ms=data.get("plot_update_ms", self.resources_tab.PLOT_UPDATE_MS),

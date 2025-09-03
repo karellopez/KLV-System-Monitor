@@ -5,7 +5,7 @@ It takes inspiration from **GNOME/Ubuntu System Monitor** and brings a similarly
 
 - **Three CPU views**: **Multi thread**, **General view**, and **Multi window** (selectable in **Preferences**).
 - **Configurable smoothing and refresh**: decoupled refresh rates for plots vs. text/labels; per-subsystem EMA alphas (CPU, memory, network).
-- **Tunable visuals**: line width, colors (per-core or mono), grid toggles, antialiasing, translucent fill for CPU areas, and frequency labels per core.
+- **Tunable visuals**: line width, colors (per-core or mono), grid toggles, antialiasing, translucent fill for CPU areas, DPI scaling, and frequency labels per core.
 - **Efficient updates**: process table refreshes **only when visible**; file systems view refreshes **on demand**.
 - **Power tools**: filter and sort processes; clear current selection (stop following) and **kill selected** (when permitted).
 
@@ -117,8 +117,9 @@ All performance, smoothing and UI options in one place:
 - **Processes refresh interval (ms)**, **File systems refresh interval (ms)** — decoupled from plot updates.  
 - **CPU / Memory / Network EMA alpha** — smoothing strength (0–0.999).  
 - **Show per-CPU frequencies (and average)** — overlay GHz per core + mean.  
-- **Show X/Y grid**, **Grid squares per axis**.  
+- **Show X/Y grid**, **Grid squares per axis**.
 - **Smooth network graph (EMA)**, **Enable antialiasing**, **Fill CPU graphs with transparency**.
+- **DPI scaling (%)** — adjust overall interface size.
 
 **Multi-thread view**
 - **Thread line width (px)**.  
