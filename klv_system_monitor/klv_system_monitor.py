@@ -532,9 +532,10 @@ class CollapsibleSection(QtWidgets.QWidget):
         self.toggle = QtWidgets.QToolButton(text=title, checkable=True, checked=True)
         # Style the toggle so that its text color follows the current palette
         self._update_toggle_style()
-        font = self.toggle.font()
-        font.setBold(True)
-        self.toggle.setFont(font)
+        # Apply an initial bold font to the toggle so section titles stand out.
+        # The font will be refreshed when the parent widget's font changes to
+        # honor DPI scaling adjustments made at runtime.
+        self._apply_title_font()
         self.toggle.setToolButtonStyle(QtCore.Qt.ToolButtonTextBesideIcon)
         self.toggle.setArrowType(QtCore.Qt.DownArrow)
         self.toggle.clicked.connect(self._on_toggle)
@@ -564,10 +565,19 @@ class CollapsibleSection(QtWidgets.QWidget):
             f"QToolButton {{ border: none; color: {fg}; }}"
         )
 
+    def _apply_title_font(self) -> None:
+        """Set the toggle's font to the current widget font in bold."""
+        font = QtGui.QFont(self.font())
+        font.setBold(True)
+        self.toggle.setFont(font)
+
     def changeEvent(self, event: QtCore.QEvent):  # type: ignore[override]
         if event.type() == QtCore.QEvent.PaletteChange:
             # When the theme changes, update the toggle color
             self._update_toggle_style()
+        elif event.type() == QtCore.QEvent.FontChange:
+            # Propagate DPI scaling by refreshing the bold title font
+            self._apply_title_font()
         super().changeEvent(event)
 
     def _on_toggle(self):
@@ -922,6 +932,9 @@ class ResourcesTab(QtWidgets.QWidget):
             self._schedule_temperature()
         self._update_tick_steps()
 
+        # Ensure custom text elements start with the correct application font.
+        self.update_fonts(self.font())
+
     def showEvent(self, e: QtGui.QShowEvent):
         self.plot_timer.start(self.PLOT_UPDATE_MS)
         self.text_timer.start(self.TEXT_UPDATE_MS)
@@ -949,6 +962,29 @@ class ResourcesTab(QtWidgets.QWidget):
 
     def _apply_grid(self, plot: pg.PlotWidget):
         plot.showGrid(x=self.SHOW_GRID_X, y=self.SHOW_GRID_Y, alpha=0.2)
+
+    def update_fonts(self, font: QtGui.QFont) -> None:
+        """Apply *font* to elements that do not auto-scale.
+
+        Qt automatically propagates font changes to most widgets, but custom
+        ``pyqtgraph`` items such as ``TextItem`` instances and the bold toggle
+        buttons used for section headers require manual updates.  This helper is
+        invoked whenever the application DPI scale changes so that all resource
+        plots remain readable.
+        """
+
+        # Update collapsible section headers (CPU, Memory, Network)
+        self.cpu_section.setFont(font)
+        self.mem_section.setFont(font)
+        self.net_section.setFont(font)
+
+        # Labels drawn above each mini plot
+        for lbl in self.cpu_mini_label_widgets:
+            lbl.setFont(font)
+
+        # Labels drawn inside each mini plot
+        for item in self.cpu_mini_labels:
+            item.setFont(font)
 
     def _apply_cpu_fill(self):
         """Enable or disable translucent area under CPU curves for all view modes."""
@@ -2875,6 +2911,10 @@ class MainWindow(QtWidgets.QMainWindow):
         self.tabs.setFont(font)
         self.processes_tab.setFont(font)
         self.resources_tab.setFont(font)
+        # Some widgets and pyqtgraph text items do not automatically inherit
+        # application font changes (e.g. section titles and mini-plot labels).
+        # Update those manually so DPI scaling applies uniformly.
+        self.resources_tab.update_fonts(font)
         self.filesystems_tab.setFont(font)
         self.about_btn.setFont(font)
         self.pref_btn.setFont(font)
