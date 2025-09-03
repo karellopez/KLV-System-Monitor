@@ -2845,11 +2845,31 @@ class MainWindow(QtWidgets.QMainWindow):
             self.filesystems_tab.timer.stop()
 
     def set_dpi_scale(self, percent: int) -> None:
-        """Scale fonts and pyqtgraph elements according to *percent*."""
+        """Scale interface fonts according to *percent*.
+
+        The application font is scaled and applied to widgets so that both Qt
+        and pyqtgraph components inherit the new size.  Earlier versions of
+        the code attempted to use a non-existent ``pyqtgraph`` configuration
+        option (``globalFontScale``), which raised a ``KeyError`` at runtime.
+        Removing that call ensures the preference dialog can apply the change
+        and persist it without errors.
+        """
+
+        # Clamp the value so extremely small scales do not result in an
+        # unreadable interface.  The value is converted to a multiplier where
+        # 100% equals a factor of 1.0.
         factor = max(percent, 25) / 100.0
+
         app = QtWidgets.QApplication.instance()
+
+        # Create a scaled copy of the original application font.  This ensures
+        # that the chosen family and style are preserved while only the point
+        # size is modified.
         font = QtGui.QFont(self._base_font)
         font.setPointSizeF(self._base_point_size * factor)
+
+        # Apply the scaled font to the application and the primary widgets so
+        # any child widgets (including pyqtgraph items) inherit the update.
         app.setFont(font)
         self.setFont(font)
         self.tabs.setFont(font)
@@ -2858,7 +2878,9 @@ class MainWindow(QtWidgets.QMainWindow):
         self.filesystems_tab.setFont(font)
         self.about_btn.setFont(font)
         self.pref_btn.setFont(font)
-        pg.setConfigOption('globalFontScale', factor)
+
+        # Store the chosen scale so it can be persisted and restored on the
+        # next application launch.
         self.dpi_scale = int(percent)
 
     def apply_theme(self, name: str):
